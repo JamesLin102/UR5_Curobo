@@ -1,29 +1,18 @@
-"""Scene shared by the planner server and the Isaac Sim client.
+"""The shipped demo: one slab the cameras have to discover for themselves.
 
-Deliberately free of cuRobo and Isaac Sim imports so BOTH processes can load it.
-Defining the obstacles once here is what keeps the simulated world and the
-planner's world from drifting apart.
+Two targets on opposite sides of a cell, and an obstacle between them that the
+planner is never told about. Avoidance of it is therefore proof that the live
+map is driving the plan -- see HANDOVER section 7 for the measurements, and
+scenes/base.py for what a scene may define.
+
+Copy this file to add your own scene, then run both processes with
+``--scene <your module name>``.
 """
 
-SIM_DT = 1.0 / 60.0
+from .base import SceneSpec, WatchBox
+
 
 HOME = [0.0, -2.2, 1.9, -1.383, -1.57, 0.0]
-
-# Selectable robots. Both are 6-DOF: the 2F-85's fingers are rigid collision
-# geometry, not actuated joints, so the gripper adds reach and bulk but no DOF.
-ROBOTS = {
-    "ur5e": {
-        "config": "configs/ur5e.yml",
-        "urdf": "assets/robot/ur_description/ur5e.urdf",
-        "tool_frame": "tool0",
-    },
-    "ur5e_2f85": {
-        "config": "configs/ur5e_robotiq_2f_85.yml",
-        "urdf": "assets/robot/ur_description/ur5e_robotiq_2f_85.urdf",
-        "tool_frame": "grasp_frame",
-    },
-}
-DEFAULT_ROBOT = "ur5e"
 
 # name, dims (full extents, m), pose [x, y, z, qw, qx, qy, qz], rgb
 # Deliberately sparse. An earlier version had a wall at z<=0.70 under a shelf
@@ -159,9 +148,6 @@ CAMERAS = {
     },
 }
 
-# The wrist camera's URDF frame, still needed on its own in a couple of places.
-CAMERA = CAMERAS["wrist"]
-
 # Volumetric map covering the cell in front of the robot.
 MAPPER = {
     "voxel_size": 0.015,
@@ -196,5 +182,20 @@ MAPPER = {
     "minimum_tsdf_weight": 0.01,
 }
 
-HOST = "127.0.0.1"
-PORT = 5599
+
+SCENE = SceneSpec(
+    obstacles=OBSTACLES,
+    targets=TARGETS,
+    home=HOME,
+    scan_poses=SCAN_POSES,
+    cameras=CAMERAS,
+    mapper=MAPPER,
+    # The planner is never told about this one; the cameras have to find it.
+    unmapped=[DRAG_CUBE],
+    # Report how many occupied voxels land inside the slab, and how high they
+    # reach. The z extent is what separates "the cameras can see this" from
+    # "the cameras can see the BOTTOM of this" -- a wrist camera alone stops
+    # around 0.36 m on a 0.70 m object.
+    watch=[WatchBox(DRAG_CUBE[0], DRAG_CUBE[1], DRAG_CUBE[2])],
+    motions={DRAG_CUBE[0]: CUBE_SWEEP},
+)

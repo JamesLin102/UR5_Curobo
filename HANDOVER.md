@@ -69,13 +69,16 @@ DISPLAY=:1 /home/eencku/anaconda3/envs/curobo_isaaclab/bin/python \
   /media/eencku/2TBDATA/yusian-ubuntu/UR5_curobo/scripts/isaacsim_ur5e_demo.py --robot ur5e_2f85
 ```
 
-Useful flags: `--no-mapping` (both sides, for A/B), `--no-overhead` (demo only:
-wrist camera alone, for A/B against the fixed one), `--static` (demo only: hold
-the arm at HOME and just look through the cameras), `--no-cuda-graph` (server).
+Useful flags: `--scene NAME` (**both sides, must match**), `--no-mapping` (both
+sides, for A/B), `--no-overhead` (demo only: wrist camera alone, for A/B
+against the fixed one), `--static` (demo only: hold the arm at HOME and just
+look through the cameras), `--move-body` (demo only: drive the unmapped body
+along its scene motion), `--no-cuda-graph` (server).
 
 The server names its cameras at startup, so a mismatch is visible immediately:
 
 ```
+[planner] warp 1.15.0  robot ur5e_2f85  scene demo_cube
 [planner] cameras: wrist (camera_link), overhead (fixed)
 ```
 
@@ -403,24 +406,43 @@ In rough priority order:
 
 ```
 scripts/
-  scene_def.py              obstacles, targets, CAMERAS, mapper settings.
-                            Imported by BOTH processes - single source of truth.
+  scenes/
+    base.py                 SceneSpec + WatchBox: what a scene must and may
+                            define. The contract both processes build from.
+    demo_cube.py            the shipped scene. Copy this to make your own.
+    __init__.py             load(name) -> SceneSpec, available()
+  rig.py                    what is NOT the scene: robots, SIM_DT, host/port
   planner_server.py         cuRobo 0.8: planning + mapping service
   isaacsim_ur5e_demo.py     Isaac Sim client. Must not import cuRobo.
-                            Builds both cameras; derives the ROS body pose of
-                            the fixed one from its optical pose and checks it.
+                            Builds the cameras; derives the ROS body pose of
+                            each fixed one from its optical pose and checks it.
   proto.py                  length-prefixed framing (depth frames are 1.2 MB)
 
-tools/
+tools/  -- one-time model generation (rerun only if the robot changes):
   build_ur5e_2f85_urdf.py   splice UR5e + 2F-85 + wrist camera
   build_ur5e_2f85_config.py collision spheres + cuRobo yml
   clip_joint_limits.py      ±360° -> ±180°, keeps .orig backups
   convert_2f85_meshes.py    .dae -> .obj (Isaac Sim's COLLADA importer crashes)
   convert_v1_robot_yaml.py  cuRobo v1 -> v2 robot yaml schema
+
+tools/  -- checks and harnesses (rerun whenever you change something):
   check_robot_cfg.py        smoke test: FK -> planner build -> plan_pose
-  ab_solution_spread.py     headless harness: failure rate + joint wander
-  bench_mapper.py           mapper integrate/ESDF timing
+  ab_solution_spread.py     headless: failure rate + joint wander, --scene aware
+  bench_mapper.py           mapper integrate/ESDF timing, synthetic input
 ```
+
+### Adding a scene
+
+Copy `scripts/scenes/demo_cube.py`, edit it, and start **both** processes with
+`--scene <your module name>`. `scenes/base.py` documents every field; the short
+version is that `obstacles` are the cuboids the planner is told about,
+`unmapped` are the bodies only the simulator knows — the ones the cameras have
+to discover — and `watch` names volumes to report voxel counts for, which is
+how you tell whether the map actually found something.
+
+The two processes never exchange geometry, so they must load the same scene.
+A plan request carries its scene name and the server refuses one it is not
+running, rather than silently planning against a different world.
 
 Git repo since the baseline commit. The overhead camera went in on the
 `overhead-camera` branch.

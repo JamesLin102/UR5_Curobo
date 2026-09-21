@@ -19,7 +19,8 @@ import numpy as np
 import torch
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
-from scene_def import HOME, OBSTACLES, SIM_DT, TARGETS  # noqa: E402
+import scenes  # noqa: E402
+from rig import SIM_DT  # noqa: E402
 
 from curobo.types import ContentPath, GoalToolPose, JointState, Pose  # noqa: E402
 from curobo.kinematics import Kinematics, KinematicsCfg  # noqa: E402
@@ -38,6 +39,7 @@ def main():
     ap.add_argument("--cycles", type=int, default=60)
     ap.add_argument("--label", default="run")
     ap.add_argument("--seed", type=int, default=123)
+    ap.add_argument("--scene", default=scenes.DEFAULT, choices=scenes.available())
     args = ap.parse_args()
 
     content = ContentPath(
@@ -46,7 +48,11 @@ def main():
         robot_asset_absolute_path=f"{ROOT}/assets/robot/ur_description",
     )
     kin = Kinematics(KinematicsCfg.from_content_path(content))
-    scene = Scene(cuboid=[Cuboid(name=n, dims=d, pose=p) for n, d, p, _ in OBSTACLES])
+    spec = scenes.load(args.scene)
+    # Only the obstacles the planner is told about: this harness measures how
+    # far solutions wander, not perception, so it never builds a map.
+    scene = Scene(cuboid=[Cuboid(name=n, dims=d, pose=p)
+                          for n, d, p, _ in spec.obstacles])
     planner = MotionPlanner(
         MotionPlannerCfg.create(
             robot=load_robot_yaml(content),
@@ -59,10 +65,10 @@ def main():
     planner.warmup()
     names = list(kin.joint_names)
 
-    q = list(HOME)
+    q = list(spec.home)
     fails, visited, lengths, pose_err = 0, [], [], []
     for i in range(args.cycles):
-        target = TARGETS[i % 2]
+        target = spec.targets[i % len(spec.targets)]
         js = JointState.from_position(
             torch.tensor([q], device="cuda", dtype=torch.float32), joint_names=names
         )

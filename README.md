@@ -18,6 +18,10 @@ tools/bench_mapper.py             Mapper TSDF integrate + ESDF timing
 The Isaac Sim demo and its planner service live in `scripts/`; see HANDOVER.md
 for why they are two processes and how the cameras are set up.
 
+Scenes are pluggable: `scripts/scenes/base.py` is the contract,
+`scripts/scenes/demo_cube.py` the shipped example. Copy it and run both
+processes with `--scene <name>`.
+
 Verify:
 
     python tools/check_robot_cfg.py ur5e

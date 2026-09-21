@@ -5,9 +5,10 @@ requires Warp 1.8.2 and cuRobo 0.8 requires Warp >= 1.13, so they cannot live
 in one interpreter. Planning and mapping happen in planner_server.py, reached
 over a local socket.
 
-The scene contains one obstacle the planner is never told about
-(scene_def.DRAG_CUBE). The arm can only discover it through the wrist camera,
-so avoiding it is proof the map is actually feeding the planner.
+The scene's `unmapped` bodies are never described to the planner. The arm can
+only discover them through the cameras, so avoiding them is proof the map is
+actually feeding the planner. Scenes live in scripts/scenes/; both processes
+must be started with the same --scene.
 
 Start planner_server.py first, then:
     python scripts/isaacsim_ur5e_demo.py --robot ur5e_2f85
@@ -21,11 +22,9 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import scenes  # noqa: E402
 from proto import recv_msg, send_msg  # noqa: E402
-from scene_def import (  # noqa: E402
-    CAMERAS, CUBE_SWEEP, DEFAULT_ROBOT, DRAG_CUBE, HOME, HOST, OBSTACLES, PORT,
-    ROBOTS, SCAN_POSES, SIM_DT, TARGETS,
-)
+from rig import DEFAULT_ROBOT, HOST, PORT, ROBOTS, SIM_DT  # noqa: E402
 
 # planner_server.py flushes every line; without the same here, this side's
 # output sits in the stdout buffer whenever it is redirected to a file, and the
@@ -34,17 +33,22 @@ sys.stdout.reconfigure(line_buffering=True)
 
 _ap = argparse.ArgumentParser()
 _ap.add_argument("--robot", default=DEFAULT_ROBOT, choices=sorted(ROBOTS))
+_ap.add_argument("--scene", default=scenes.DEFAULT, choices=scenes.available(),
+                 help="scene module under scripts/scenes/; must match the server")
 _ap.add_argument("--no-mapping", action="store_true")
 _ap.add_argument("--no-overhead", action="store_true",
                  help="wrist camera only, for A/B against the fixed camera")
 _ap.add_argument("--map-every", type=int, default=6, help="fuse a frame every N sim steps")
-_ap.add_argument("--move-cube", action="store_true",
-                 help="sweep the cube along y instead of leaving it parked")
+_ap.add_argument("--move-body", "--move-cube", dest="move_body",
+                 action="store_true",
+                 help="drive the unmapped body along its scene motion instead "
+                      "of leaving it parked")
 _ap.add_argument("--static", action="store_true",
                  help="hold the arm at HOME; no planning, just look")
 _ap.add_argument("--depth-lag", type=int, default=2,
                  help="sim steps the depth annotator trails the physics by")
 ARGS = _ap.parse_args()
+SCENE = scenes.load(ARGS.scene)
 
 from isaacsim import SimulationApp  # noqa: E402
 
@@ -83,6 +87,26 @@ class Planner:
                     )
                 time.sleep(2.0)
         print(f"[demo] connected to planner on {HOST}:{PORT}")
+        self._check_scene()
+
+    def _check_scene(self):
+        """Refuse to run against a planner that loaded a different scene.
+
+        The two processes never exchange geometry, so a mismatch would show up
+        only as inexplicably wrong plans. Checked here, on connect, rather than
+        on the first plan: this is before the stage is built, so the failure is
+        immediate and costs nothing.
+        """
+        send_msg(self.sock, {"op": "scene", "scene": ARGS.scene})
+        header, _ = recv_msg(self.sock)
+        theirs = header.get("scene")
+        if theirs != ARGS.scene:
+            print(f"[demo] SCENE MISMATCH: the planner is running {theirs!r}, "
+                  f"this process has {ARGS.scene!r}.", flush=True)
+            print("[demo] Both sides build their world from the scene, so they "
+                  "must match. Restart one of them.", flush=True)
+            simulation_app.close()
+            sys.exit(1)
 
     def plan(self, q, target):
         send_msg(self.sock, {"op": "plan", "q": list(map(float, q)), "target": target})
@@ -128,7 +152,7 @@ def build_stage(world):
     print(f"[demo] {ARGS.robot} imported at {prim_path}")
 
     world.scene.add_default_ground_plane()
-    for name, dims, pose, colour in OBSTACLES:
+    for name, dims, pose, colour in SCENE.obstacles:
         world.scene.add(
             FixedCuboid(
                 prim_path=f"/World/obstacles/{name}",
@@ -138,7 +162,7 @@ def build_stage(world):
                 color=np.array(colour),
             )
         )
-    for i, t in enumerate(TARGETS):
+    for i, t in enumerate(SCENE.targets):
         VisualCuboid(
             prim_path=f"/World/targets/target_{i}",
             name=f"target_{i}",
@@ -159,22 +183,27 @@ def build_stage(world):
             world.stage.GetPrimAtPath(f"/World/targets/target_{i}")
         ).CreatePurposeAttr(UsdGeom.Tokens.guide)
 
-    # The draggable cube. A VisualCuboid, not a physics body, so dragging it in
-    # the viewport does not fight PhysX -- it still renders into depth, which is
-    # all the camera needs.
-    name, dims, pose, colour = DRAG_CUBE
-    cube = VisualCuboid(
-        prim_path=f"/World/{name}",
-        name=name,
-        position=np.array(pose[:3]),
-        scale=np.array(dims),
-        color=np.array(colour),
-    )
+    # The bodies the planner is never told about. VisualCuboids, not physics
+    # bodies, so dragging one in the viewport does not fight PhysX -- it still
+    # renders into depth, which is all the cameras need. That does mean the arm
+    # passes through rather than hitting it.
+    #
+    # These deliberately keep their default render purpose, unlike the target
+    # markers above: being seen is the entire point of them.
+    bodies = {}
+    for name, dims, pose, colour in SCENE.unmapped:
+        bodies[name] = VisualCuboid(
+            prim_path=f"/World/{name}",
+            name=name,
+            position=np.array(pose[:3]),
+            scale=np.array(dims),
+            color=np.array(colour),
+        )
 
     light = UsdLux.DistantLight.Define(world.stage, "/World/DistantLight")
     light.CreateIntensityAttr(2500)
     light.CreateAngleAttr(1.0)
-    return prim_path, cube
+    return prim_path, bodies
 
 
 def attach_wrist_camera(world, prim_path):
@@ -194,7 +223,7 @@ def attach_wrist_camera(world, prim_path):
     which is the quaternion below. Verified at runtime by the check further
     down, which prints the view direction in camera_link axes.
     """
-    spec = CAMERAS["wrist"]
+    spec = SCENE.cameras["wrist"]
     link = f"{prim_path}/{spec['link']}"
     if not world.stage.GetPrimAtPath(link).IsValid():
         raise RuntimeError(f"{link} missing - rebuild the URDF with tools/build_ur5e_2f85_urdf.py")
@@ -297,18 +326,18 @@ def _matrix_to_quat(m):
 def attach_overhead_camera(world):
     """Fixed camera on a gantry above the cell, looking straight down.
 
-    scene_def stores the OPTICAL pose (+Z along the view), because that is what
+    The scene stores the OPTICAL pose (+Z along the view), because that is what
     cuRobo's mapper kernels consume and what the planner server hands to
     CameraObservation verbatim. Isaac Sim wants ROS BODY axes, so the body
     quaternion is DERIVED here instead of being written down a second time:
-    moving the camera in scene_def moves it here too, with no second set of
+    moving the camera in the scene moves it here too, with no second set of
     magic numbers to keep in sync.
 
     This camera exists because a wrist camera cannot see above its own
     altitude, which is what forced the demo obstacle to be shaped to suit the
     sensor rather than the other way round.
     """
-    spec = CAMERAS["overhead"]
+    spec = SCENE.cameras["overhead"]
     pose = spec["pose"]
     r_opt = _quat_to_matrix(pose[3:])
     q_body = _matrix_to_quat(r_opt @ OPTICAL_TO_ROS_BODY)
@@ -335,7 +364,7 @@ def attach_overhead_camera(world):
     m_cam = cache.GetLocalToWorldTransform(world.stage.GetPrimAtPath(path))
     r = m_cam.ExtractRotationMatrix()
     view = -np.array([r[2][0], r[2][1], r[2][2]])  # USD camera looks down -Z
-    want = r_opt[:, 2]                             # optical +Z from scene_def
+    want = r_opt[:, 2]                             # optical +Z from the scene
     dot = float(np.dot(view, want))
     print(f"[demo] overhead camera at {np.array(pose[:3]).round(3)}: "
           f"{spec['width']}x{spec['height']}, {spec['horizontal_fov_deg']:.0f} deg HFOV")
@@ -343,7 +372,7 @@ def attach_overhead_camera(world):
           f"dot = {dot:+.3f}  ({'AGREE' if dot > 0.99 else 'WRONG'})")
     if dot < 0.99:
         raise RuntimeError(
-            f"overhead camera is not pointing where scene_def says: view {view} "
+            f"overhead camera is not pointing where the scene says: view {view} "
             f"vs optical +Z {want}. Fix the conversion, do not adjust the check."
         )
     return cam
@@ -359,22 +388,28 @@ def grab_depth(cam):
     return np.nan_to_num(depth, nan=0.0, posinf=0.0, neginf=0.0)
 
 
-def move_cube(cube, t_s):
-    """Slide the cube back and forth along y, inside the camera's scan band.
+def move_bodies(bodies, t_s):
+    """Slide the scene's unmapped body along y, inside the cameras' scan band.
 
     The planner is never told about this. The only way the arm can know where
-    the cube is, is the wrist camera -- so a change in the planned route when
-    the cube arrives is the whole proof.
+    the body is, is the cameras -- so a change in the planned route when it
+    arrives is the whole proof.
+
+    Returns the body's current y, or None if the scene has no unmapped body.
     """
-    if not ARGS.move_cube:
-        return DRAG_CUBE[2][1]          # parked: the A/B test wants it still
-    a, b = CUBE_SWEEP["y_from"], CUBE_SWEEP["y_to"]
-    phase = (t_s % CUBE_SWEEP["period_s"]) / CUBE_SWEEP["period_s"]
+    if not bodies:
+        return None
+    name, prim = next(iter(bodies.items()))
+    home_pose = SCENE.body(name)[2]
+    sweep = SCENE.motions.get(name)
+    if not ARGS.move_body or not sweep:
+        return home_pose[1]             # parked: the A/B test wants it still
+    a, b = sweep["y_from"], sweep["y_to"]
+    phase = (t_s % sweep["period_s"]) / sweep["period_s"]
     # triangle wave: out and back, with a pause at each end
     u = min(1.0, max(0.0, abs(1.0 - 2.0 * phase) * 1.4 - 0.2))
     y = a + (b - a) * u
-    pos = np.array([CUBE_SWEEP["x"], y, DRAG_CUBE[2][2]])
-    cube.set_world_pose(position=pos)
+    prim.set_world_pose(position=np.array([sweep["x"], y, home_pose[2]]))
     return y
 
 
@@ -383,7 +418,7 @@ def main():
     planner = Planner()
 
     world = World(physics_dt=SIM_DT, rendering_dt=SIM_DT, stage_units_in_meters=1.0)
-    prim_path, cube = build_stage(world)
+    prim_path, bodies = build_stage(world)
     set_camera_view(eye=[2.0, 1.6, 1.4], target=[0.35, 0.0, 0.35])
 
     robot = SingleArticulation(prim_path=prim_path, name="ur5e")
@@ -401,14 +436,14 @@ def main():
         px.CreateSolverPositionIterationCountAttr(64)
         px.CreateSolverVelocityIterationCountAttr(16)
 
-    probe = planner.plan(HOME, TARGETS[0])
+    probe = planner.plan(SCENE.home, SCENE.targets[0])
     curobo_names = probe["joint_names"]
     sim_names = list(robot.dof_names)
     curobo_to_sim = [curobo_names.index(j) for j in sim_names]
     sim_to_curobo = [sim_names.index(j) for j in curobo_names]
     print(f"[demo] joints: sim {sim_names}")
 
-    home_sim = np.array(HOME)[curobo_to_sim]
+    home_sim = np.array(SCENE.home)[curobo_to_sim]
     robot.set_joint_positions(home_sim)
     robot.apply_action(ArticulationAction(joint_positions=home_sim))
     for _ in range(60):
@@ -468,7 +503,7 @@ def main():
     if cams:
         print("[demo] scanning the cell before planning...")
         fused = 0
-        for pose in SCAN_POSES:
+        for pose in SCENE.scan_poses:
             goal_sim = np.array(pose)[curobo_to_sim]
             for step in range(70):
                 if not simulation_app.is_running():
@@ -484,7 +519,8 @@ def main():
         print(f"[demo] scan done: {fused} frames sent to the mapper")
 
     print("[demo] -------------------------------------------------------------")
-    print(f"[demo]  Drag /World/{DRAG_CUBE[0]} into the arm's path in the viewport.")
+    for name in bodies:
+        print(f"[demo]  Drag /World/{name} into the arm's path in the viewport.")
     print("[demo]  The planner is never told where it is.")
     if cams:
         print(f"[demo]  The cameras ({', '.join(cams)}) have to find it, and the")
@@ -505,10 +541,10 @@ def main():
 
     target_idx, plan_no, steps = 0, 0, 0
     while simulation_app.is_running():
-        result = planner.plan(q_now(), TARGETS[target_idx])
+        result = planner.plan(q_now(), SCENE.targets[target_idx])
         plan_no += 1
         if not result.get("ok"):
-            # Keep the cube moving while we retry. Without this the sim freezes
+            # Keep the body moving while we retry. Without this the sim freezes
             # the one thing that could clear the route, and a blocked plan stays
             # blocked forever.
             y = None
@@ -516,25 +552,25 @@ def main():
                 if not simulation_app.is_running():
                     break
                 steps += 1
-                y = move_cube(cube, steps * SIM_DT)
+                y = move_bodies(bodies, steps * SIM_DT)
                 world.step(render=True)
                 if cams and steps % ARGS.map_every == 0:
                     fuse()
-            print(f"[demo] plan #{plan_no} blocked - waiting "
-                  f"| cube y={y:+.2f}" if y is not None else
-                  f"[demo] plan #{plan_no} blocked - waiting")
+            where = f" | body y={y:+.2f}" if y is not None else ""
+            print(f"[demo] plan #{plan_no} blocked - waiting{where}")
             continue
 
         traj = result["traj"]
+        y = move_bodies(bodies, steps * SIM_DT)
+        where = f" | body y={y:+.2f}" if y is not None else ""
         print(f"[demo] plan #{plan_no} -> target {target_idx}: "
-              f"solve {result['solve_ms']:.0f} ms, {len(traj)} waypoints "
-              f"| cube y={move_cube(cube, steps * SIM_DT):+.2f}")
+              f"solve {result['solve_ms']:.0f} ms, {len(traj)} waypoints{where}")
 
         for wp_row in traj:
             if not simulation_app.is_running():
                 break
             robot.apply_action(ArticulationAction(joint_positions=wp_row[curobo_to_sim]))
-            move_cube(cube, steps * SIM_DT)
+            move_bodies(bodies, steps * SIM_DT)
             world.step(render=True)
             q_history.append(q_now())
             steps += 1
@@ -545,7 +581,7 @@ def main():
             if not simulation_app.is_running():
                 break
             steps += 1
-            move_cube(cube, steps * SIM_DT)
+            move_bodies(bodies, steps * SIM_DT)
             world.step(render=True)
             if cams and i >= 15 and i % ARGS.map_every == 0:
                 fuse()

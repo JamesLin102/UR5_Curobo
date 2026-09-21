@@ -30,11 +30,9 @@ import numpy as np
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import scenes  # noqa: E402
 from proto import recv_msg, send_msg  # noqa: E402
-from scene_def import (  # noqa: E402
-    CAMERAS, DEFAULT_ROBOT, DRAG_CUBE, HOST, MAPPER, OBSTACLES, PORT, ROBOTS,
-    SIM_DT,
-)
+from rig import DEFAULT_ROBOT, HOST, PORT, ROBOTS, SIM_DT  # noqa: E402
 
 from curobo.types import CameraObservation, ContentPath, GoalToolPose, JointState, Pose  # noqa: E402
 from curobo.kinematics import Kinematics, KinematicsCfg  # noqa: E402
@@ -46,33 +44,42 @@ from curobo._src.robot.loader.util import load_robot_yaml  # noqa: E402
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def static_scene():
-    return Scene(cuboid=[Cuboid(name=n, dims=d, pose=p) for n, d, p, _ in OBSTACLES])
+def static_scene(scene):
+    """The world the planner IS told about: exact cuboids, nothing perceived.
+
+    scene.unmapped is deliberately absent -- those bodies exist only in the
+    simulator, and the whole point is that they reach the planner through the
+    cameras or not at all.
+    """
+    return Scene(cuboid=[Cuboid(name=n, dims=d, pose=p)
+                         for n, d, p, _ in scene.obstacles])
 
 
 class Mapping:
     """Wrist-camera RGB-D -> TSDF -> ESDF, fed back into the planner's scene."""
 
-    def __init__(self, robot_dict, kin):
+    def __init__(self, robot_dict, kin, scene):
         self.kin = kin
+        self.scene = scene
+        cameras, mapper_cfg = scene.cameras, scene.mapper
         # Buffers are sized for the largest camera; each frame is integrated on
         # its own, so num_cameras stays 1 (verified: two poses fused through
         # separate integrate() calls land in one map exactly where predicted).
-        h = max(c["height"] for c in CAMERAS.values())
-        w = max(c["width"] for c in CAMERAS.values())
+        h = max(c["height"] for c in cameras.values())
+        w = max(c["width"] for c in cameras.values())
         self.mapper = Mapper(
             MapperCfg(
-                voxel_size=MAPPER["voxel_size"],
-                esdf_voxel_size=MAPPER["esdf_voxel_size"],
-                extent_meters_xyz=tuple(MAPPER["extent"]),
-                extent_esdf_meters_xyz=tuple(MAPPER["extent"]),
-                grid_center=torch.tensor(MAPPER["grid_center"], dtype=torch.float32),
-                truncation_distance=MAPPER["voxel_size"] * 4.0,
-                depth_minimum_distance=MAPPER["depth_min"],
-                depth_maximum_distance=MAPPER["depth_max"],
-                decay_factor=MAPPER["decay_factor"],
-                frustum_decay_factor=MAPPER["frustum_decay_factor"],
-                minimum_tsdf_weight=MAPPER["minimum_tsdf_weight"],
+                voxel_size=mapper_cfg["voxel_size"],
+                esdf_voxel_size=mapper_cfg["esdf_voxel_size"],
+                extent_meters_xyz=tuple(mapper_cfg["extent"]),
+                extent_esdf_meters_xyz=tuple(mapper_cfg["extent"]),
+                grid_center=torch.tensor(mapper_cfg["grid_center"], dtype=torch.float32),
+                truncation_distance=mapper_cfg["voxel_size"] * 4.0,
+                depth_minimum_distance=mapper_cfg["depth_min"],
+                depth_maximum_distance=mapper_cfg["depth_max"],
+                decay_factor=mapper_cfg["decay_factor"],
+                frustum_decay_factor=mapper_cfg["frustum_decay_factor"],
+                minimum_tsdf_weight=mapper_cfg["minimum_tsdf_weight"],
                 num_cameras=1,
                 image_height=h,
                 image_width=w,
@@ -98,16 +105,16 @@ class Mapping:
         # the robot's own start state reads as in-collision -- after which every
         # plan fails. 0.12 clears the arm's immediate surroundings.
         self.rigs = {}
-        for cam_name, spec in CAMERAS.items():
+        for cam_name, spec in cameras.items():
             self.rigs[cam_name] = {
                 "segmenter": RobotSegmenter(
-                    kin, distance_threshold=MAPPER["self_mask_margin"],
+                    kin, distance_threshold=mapper_cfg["self_mask_margin"],
                     use_cuda_graph=False, ops_dtype=torch.float32,
                 ),
                 "filter": FilterDepth(
                     image_shape=(spec["height"], spec["width"]),
-                    depth_minimum_distance=MAPPER["depth_min"],
-                    depth_maximum_distance=MAPPER["depth_max"],
+                    depth_minimum_distance=mapper_cfg["depth_min"],
+                    depth_maximum_distance=mapper_cfg["depth_max"],
                 ),
                 # Static cameras carry their pose here; the rest get it by FK
                 # from the joint state that arrives with each frame.
@@ -127,18 +134,20 @@ class Mapping:
         self.last_esdf_ms = 0.0
         self.occupied = 0
         self.self_hits = 0
-        # The cube's own bounding box, for the decisive count below. "The map
-        # has tall stuff in it" is not the same as "the map has THE CUBE", and
-        # conflating the two cost a lot of debugging.
-        _, cdim, cpose, _ = DRAG_CUBE
-        self.cube_lo = torch.tensor(
-            [cpose[i] - cdim[i] / 2 for i in range(3)], device="cuda")
-        self.cube_hi = torch.tensor(
-            [cpose[i] + cdim[i] / 2 for i in range(3)], device="cuda")
+        # Whatever volumes the scene asked to be watched, pre-resolved to
+        # corner tensors. "The map has tall stuff in it" is not the same as
+        # "the map has THE OBSTACLE", and conflating the two cost a lot of
+        # debugging -- so the scene names the volume it cares about and this
+        # process stays ignorant of what is in it.
+        self.watch = [
+            (w.name,
+             torch.tensor(w.bounds()[0], device="cuda"),
+             torch.tensor(w.bounds()[1], device="cuda"))
+            for w in scene.watch
+        ]
+        self.watch_report = ""
         self.tall = 0
         self.tall_where = ""
-        self.in_cube = 0
-        self.in_cube_z = ""
         self.last_q = None
 
     def integrate(self, depth: torch.Tensor, K: torch.Tensor, q: torch.Tensor,
@@ -250,27 +259,26 @@ class Mapping:
         self.occupied = 0 if voxels.centers is None else len(voxels.centers)
         self.self_hits = self._count_self_hits(voxels)
 
-        # The decisive number: occupied voxels inside the cube's own bounding
-        # box. "The map has tall stuff" is not the same as "the map has THE
-        # CUBE", and conflating the two cost a lot of debugging.
-        # ...and how high they reach. This is the number that separates "the
-        # camera can see this obstacle" from "the camera can see the BOTTOM of
-        # this obstacle": a wrist camera never sees above its own altitude, so
-        # its in-cube voxels stop around 0.40 m no matter how tall the obstacle
-        # actually is.
-        self.in_cube = 0
-        self.in_cube_z = ""
-        if voxels.centers is not None and len(voxels.centers):
-            c = voxels.centers.float()
-            inside = ((c >= self.cube_lo) & (c <= self.cube_hi)).all(dim=1)
-            self.in_cube = int(inside.sum().item())
-            if self.in_cube:
-                z = c[inside][:, 2]
-                self.in_cube_z = f" z{z.min():.2f}..{z.max():.2f}"
+        # Per watched volume: how many occupied voxels are inside it, and how
+        # high they reach. The z extent is the number that separates "the
+        # cameras can see this obstacle" from "the cameras can see the BOTTOM
+        # of it" -- a wrist camera never sees above its own altitude, so its
+        # counts stop around 0.36 m however tall the obstacle really is.
+        parts = []
+        for name, lo_t, hi_t in self.watch:
+            n, zs = 0, ""
+            if voxels.centers is not None and len(voxels.centers):
+                c = voxels.centers.float()
+                inside = ((c >= lo_t) & (c <= hi_t)).all(dim=1)
+                n = int(inside.sum().item())
+                if n:
+                    z = c[inside][:, 2]
+                    zs = f" z{z.min():.2f}..{z.max():.2f}"
+            parts.append(f"{n} in {name}{zs}")
+        self.watch_report = (", ".join(parts) + ", ") if parts else ""
 
-        # Broader and weaker: anything standing well above the table. The cell
-        # is otherwise flat, so this catches tall geometry the cube's nominal
-        # bounding box no longer covers -- e.g. after it has been dragged.
+        # Broader and weaker: anything standing well above the table. Catches
+        # geometry a watched volume no longer covers -- e.g. after it moves.
         self.tall = 0
         self.tall_where = ""
         if voxels.centers is not None and len(voxels.centers):
@@ -284,13 +292,13 @@ class Mapping:
                                    f"y{lo[1]:+.2f}..{hi[1]:+.2f} "
                                    f"z{lo[2]:+.2f}..{hi[2]:+.2f}")
 
-        scene = static_scene()
+        world = static_scene(self.scene)
         if self.occupied > 0:
-            scene.voxel = [self.voxel_grid]
-        planner.update_world(scene)
+            world.voxel = [self.voxel_grid]
+        planner.update_world(world)
 
 
-def build(robot_key, use_cuda_graph=True):
+def build(robot_key, scene, use_cuda_graph=True):
     spec = ROBOTS[robot_key]
     content = ContentPath(
         robot_config_absolute_path=f"{ROOT}/{spec['config']}",
@@ -310,7 +318,7 @@ def build(robot_key, use_cuda_graph=True):
     planner = MotionPlanner(
         MotionPlannerCfg.create(
             robot=planner_dict,
-            scene_model=static_scene(),
+            scene_model=static_scene(scene),
             use_cuda_graph=use_cuda_graph,
             interpolation_dt=SIM_DT,
             # Reserve room for the ESDF grid up front: the planner is built
@@ -319,8 +327,8 @@ def build(robot_key, use_cuda_graph=True):
                 "obb": 32,
                 "voxel": {
                     "layers": 1,
-                    "dims": list(MAPPER["extent"]),
-                    "voxel_size": MAPPER["esdf_voxel_size"],
+                    "dims": list(scene.mapper["extent"]),
+                    "voxel_size": scene.mapper["esdf_voxel_size"],
                 },
             },
         )
@@ -354,25 +362,29 @@ def main():
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--robot", default=DEFAULT_ROBOT, choices=sorted(ROBOTS))
+    ap.add_argument("--scene", default=scenes.DEFAULT, choices=scenes.available(),
+                    help="scene module under scripts/scenes/")
     ap.add_argument("--no-mapping", action="store_true")
     ap.add_argument("--no-cuda-graph", action="store_true",
                     help="build the planner without CUDA graphs")
     args = ap.parse_args()
 
-    print(f"[planner] warp {wp.config.version}  robot {args.robot}", flush=True)
+    scene = scenes.load(args.scene)
+    print(f"[planner] warp {wp.config.version}  robot {args.robot}  "
+          f"scene {args.scene}", flush=True)
     print("[planner] building (first run compiles CUDA kernels)...", flush=True)
     kin, planner, robot_dict, tool_frame = build(
-        args.robot, use_cuda_graph=not args.no_cuda_graph)
+        args.robot, scene, use_cuda_graph=not args.no_cuda_graph)
     print(f"[planner] planner ready. tool={tool_frame}", flush=True)
 
     mapping = None
     if not args.no_mapping:
-        mapping = Mapping(robot_dict, kin)
+        mapping = Mapping(robot_dict, kin, scene)
         cams = ", ".join(
-            f"{n} ({'fixed' if CAMERAS[n].get('pose') else CAMERAS[n]['link']})"
+            f"{n} ({'fixed' if scene.cameras[n].get('pose') else scene.cameras[n]['link']})"
             for n in mapping.rigs)
-        print(f"[planner] mapper ready. {MAPPER['voxel_size'] * 100:.1f} cm TSDF / "
-              f"{MAPPER['esdf_voxel_size'] * 100:.0f} cm ESDF, "
+        print(f"[planner] mapper ready. {scene.mapper['voxel_size'] * 100:.1f} cm "
+              f"TSDF / {scene.mapper['esdf_voxel_size'] * 100:.0f} cm ESDF, "
               f"{mapping.mapper.memory_usage_mb():.0f} MB", flush=True)
         print(f"[planner] cameras: {cams}", flush=True)
 
@@ -390,7 +402,18 @@ def main():
                 header, payload = recv_msg(conn)
                 op = header.get("op")
 
-                if op == "plan":
+                if op == "scene":
+                    # Handshake. The two processes never exchange geometry, so
+                    # a scene disagreement would otherwise show up only as
+                    # inexplicably wrong plans.
+                    asked = header.get("scene")
+                    if asked != args.scene:
+                        print(f"[planner] client wants scene {asked!r}, this "
+                              f"server is running {args.scene!r} - it will stop",
+                              flush=True)
+                    send_msg(conn, {"ok": asked == args.scene, "scene": args.scene})
+
+                elif op == "plan":
                     out, blob = handle_plan(planner, kin, tool_frame, header)
                     if out["ok"]:
                         print(f"[planner] plan ok: {out['solve_ms']:.0f} ms, "
@@ -423,7 +446,8 @@ def main():
                               f"{cam_name!r}", flush=True)
                         continue
                     mapping.integrate(depth, K, q, cam_name)
-                    refreshed = mapping.frames % MAPPER["esdf_every_n_frames"] == 0
+                    refreshed = (mapping.frames
+                                 % scene.mapper["esdf_every_n_frames"] == 0)
                     if refreshed:
                         mapping.refresh_esdf(planner)
                         per_cam = " ".join(f"{n}:{r['frames']}"
@@ -432,7 +456,7 @@ def main():
                               f"({per_cam}), "
                               f"ESDF {mapping.last_esdf_ms:.1f} ms, "
                               f"{mapping.occupied} voxels, "
-                              f"{mapping.in_cube} INSIDE-CUBE{mapping.in_cube_z}, "
+                              f"{mapping.watch_report}"
                               f"{mapping.tall} tall [{mapping.tall_where}], "
                               f"{mapping.self_hits} on the robot"
                               + ("" if mapping.occupied else " (map empty - "
