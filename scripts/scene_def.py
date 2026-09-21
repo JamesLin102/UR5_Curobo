@@ -58,16 +58,19 @@ DRAG_CUBE = (
     # A 0.35 m slab is entirely inside what the camera can see while still
     # blocking laterally. x=0.30 sits in the middle of the camera's scan band.
     #
-    # The size window is narrow, because the MAPPED obstacle is fatter than the
-    # real one (ESDF cell size plus the planner's collision activation
-    # distance). Measured live:
-    #   0.10 x 0.26 x 0.30   no effect
-    #   0.11 x 0.31 x 0.33   no effect
-    #   0.12 x 0.35 x 0.35   blocked  <-- this one
-    #   0.12 x 0.35 x 0.50   no effect (tall post: its top is invisible)
-    # Fed exact geometry this size merely detours the route (121 waypoints vs
-    # 81 clear); arriving through the camera it blocks outright. No size was
-    # found that reliably detours rather than blocks.
+    # The MAPPED obstacle is fatter than the real one (ESDF cell size plus the
+    # planner's collision activation distance), so size still matters. Measured
+    # live with both cameras, 120 s of planning each:
+    #   0.11 x 0.31 x 0.33   no effect   52 clear routes at 81 waypoints
+    #   0.12 x 0.35 x 0.35   DETOUR      43 consecutive routes at 121, 0 failed
+    # and with no obstacle at all, 53 consecutive 81s. So this size diverts the
+    # route every single cycle without ever blocking it.
+    #
+    # It used to block instead, which is why earlier notes describe the window
+    # as unusably narrow. That was not the obstacle: the TARGET MARKERS were
+    # being fused into the map as obstacles sitting on the goals (see
+    # build_stage, and HANDOVER section 7). Every size measured before that fix
+    # was really measuring the markers.
     "drag_me", [0.12, 0.35, 0.35], [0.30, 0.0, 0.175, 1, 0, 0, 0], (0.62, 0.20, 0.18)
 )
 

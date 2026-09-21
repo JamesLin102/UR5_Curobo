@@ -146,6 +146,18 @@ def build_stage(world):
             scale=np.array([0.04, 0.04, 0.04]),
             color=np.array([0.05, 0.43, 0.62]),
         )
+        # These markers only show where the tool is being sent. They MUST NOT
+        # reach the depth image: the cameras fuse them into the map as
+        # obstacles sitting exactly on the goals, and then every plan fails
+        # because the goal is inside an obstacle. Measured with no other
+        # obstacle in the scene at all: 193 of 199 plans failed, and the only
+        # voxels above the table were these two markers.
+        #
+        # "guide" is USD's own word for geometry that is an authoring aid
+        # rather than part of the scene, and render products skip it.
+        UsdGeom.Imageable(
+            world.stage.GetPrimAtPath(f"/World/targets/target_{i}")
+        ).CreatePurposeAttr(UsdGeom.Tokens.guide)
 
     # The draggable cube. A VisualCuboid, not a physics body, so dragging it in
     # the viewport does not fight PhysX -- it still renders into depth, which is

@@ -216,57 +216,85 @@ badly. So: collision geometry yes, actuation no. `grasp_frame` sits at
 
 - Camera geometry, orientation and roll — verified numerically and by eye.
 - Self-masking — `0 on the robot` across entire runs.
-- Map builds and is stable — ~9000–12000 voxels, no erosion.
+- Map builds and is stable — ~17000–21000 voxels with both cameras (~9000–12000
+  with the wrist alone), bounded by frustum decay rather than growing.
 - **Depth-fused ESDF genuinely blocks planning.** Minimal repro: synthetic
   depth placing a wall across the route → `plan_pose` FAILED, while the same
   planner with no map returned n=121. The pipeline is sound end to end.
 - **A/B on the live sim finally separates** (see below).
+- **Avoidance produces a stable detour**, not just a refusal: 43 consecutive
+  cycles on the 121-waypoint route, 0 failures.
 
-### The current demo result
+### The current demo result: a stable detour
 
 `scene_def.DRAG_CUBE` is an obstacle that exists **only in Isaac Sim** — the
-planner is never told about it. Same scene, same obstacle, only difference is
-whether mapping is on:
+planner is never told about it. Same scene, only difference is what the map
+knows. Both cameras, 120 s of planning per row:
 
 | | trajectory (waypoints) |
 |---|---|
-| `--no-mapping` | 101 121 81 **81 81 81 81 81** — drives straight through |
-| mapping on | 101 121 81 **blocked ×5** — refuses |
+| `--no-mapping` | `101 121 81` then **81 forever** — drives straight through |
+| no obstacle, mapping on | `101 101 121` then **81 × 53** — clean baseline |
+| mapping on | `101 101` then **121 × 43, zero failures** — diverts every cycle |
 
-Reproduced twice. 495 voxels inside the obstacle's own bounding box, all from
-the wrist camera. **This is the proof that live mapping drives avoidance.**
+**This is the proof that live mapping drives avoidance**, and it now produces a
+*detour* rather than a refusal: 43 consecutive cycles took the 121-waypoint
+route instead of the 81-waypoint one, and not one plan failed.
 
-### Why the demo is fragile (read this before changing the obstacle)
+It used to block instead — see the marker bug below, which was the real cause.
 
-Two measured constraints fight each other:
+### Visualisation markers must never reach the depth image
 
-```
-camera can only map up to  ~0.40 m   (roughly its own altitude; it never sees
-                                      anything above itself)
-route only diverts above   ~0.45 m   (for a narrow post at that location)
-```
+The two `TARGETS` markers are `VisualCuboid`s showing where the tool is being
+sent. They render, so the cameras fused them into the map — as obstacles
+sitting exactly on the goals. The planner was then being asked to move the tool
+inside an obstacle, and simply failed.
 
-Proof the ceiling is real: raising the obstacle from 0.50 m to 0.70 m added
-**zero** voxels inside its bounding box (618 → 618). Height above the camera is
-simply invisible.
+Measured with the cube shrunk to 0.02 m, i.e. **no real obstacle in the scene
+at all**:
 
-The working shape — `0.12 × 0.35 × 0.35` at `x=0.30` — resolves this by being
-**low and wide** rather than tall: entirely inside what the camera can see,
-while blocking laterally.
+| | plans failed | longest failure streak | voxels above the table |
+|---|---|---|---|
+| markers rendered | **193 / 199** | 82 | 30 — `x 0.44..0.45, y ±0.33, z 0.24..0.28` |
+| markers as `guide` | **0 / 56** | 0 | 0 |
 
-The size window is narrow, because the mapped obstacle is fatter than the real
-one (ESDF cell size + collision activation distance):
+That voxel extent is the markers themselves (`0.45, ±0.32, 0.25`, 0.04 cube).
+With the fix the same scene plans cleanly 53 times in a row at 81 waypoints.
+
+The fix is `UsdGeom.Imageable(prim).CreatePurposeAttr(UsdGeom.Tokens.guide)` —
+USD's own term for geometry that is an authoring aid rather than part of the
+scene. Render products skip it.
+
+**This bug predates the overhead camera and poisoned every earlier
+obstacle-size measurement**, including the table in the next section: those
+runs attributed to the obstacle failures that were partly the markers. A wrist
+camera only catches the markers occasionally, so it looked intermittent; a
+fixed camera watches them continuously, which turned it into near-total
+failure and finally made it visible. Anything added to the scene purely to be
+looked at needs the same treatment.
+
+### Obstacle size
+
+The mapped obstacle is fatter than the real one (ESDF cell size + collision
+activation distance), so size still decides the outcome. Re-measured with both
+cameras after the marker fix, 120 s of planning each:
 
 | size | live result |
 |---|---|
-| 0.10 × 0.26 × 0.30 | no effect |
-| 0.11 × 0.31 × 0.33 | no effect |
-| **0.12 × 0.35 × 0.35** | **blocked (works)** |
-| 0.12 × 0.35 × 0.50 (tall post) | no effect — top invisible |
+| 0.11 × 0.31 × 0.33 | no effect — 52 clear routes at 81 waypoints |
+| **0.12 × 0.35 × 0.35** | **detour — 43 routes at 121, 0 failures** |
 
-With exact geometry this size *detours* (121 vs 81 waypoints); through the
-camera it blocks outright. **I did not find a size that reliably produces a
-detour rather than a block.**
+Earlier notes described this window as unusably narrow and said no size gave a
+reliable detour rather than a block. That was wrong, and the marker bug above
+is why: those runs were measuring the markers, not the obstacle. The wrist-only
+figures for `0.10 × 0.26 × 0.30` (no effect) and the `0.50 m` tall post (no
+effect — top invisible) were taken under the same conditions and have not been
+re-measured; the tall-post row is in any case obsolete now that the fixed
+camera can see above 0.40 m (section 8).
+
+The `~0.40 m` mapping ceiling that shaped this obstacle applied to the wrist
+camera alone and no longer binds — but this obstacle has not been re-tuned to
+take advantage of it, because low-and-wide already gives a stable detour.
 
 ### Mapper settings, and why
 
@@ -351,12 +379,12 @@ rather than continuing if that check fails.
 
 ### Still open
 
-The obstacle is still the 0.35 m slab that was tuned for wrist-only coverage.
-Now that height no longer has to suit the sensor, the detour-vs-block window
-from section 7 is worth re-opening with a natural obstacle — that is the first
-thing to do on top of this.
+Nothing blocking. The obstacle is still the 0.35 m low slab chosen when the
+wrist camera's 0.40 m ceiling forced that shape; it gives a stable detour
+(section 7), so it has not been changed. Now that height is free, a taller or
+off-axis obstacle would be a more natural demo — that is a choice, not a fix.
 
-After that, in rough priority order:
+In rough priority order:
 
 1. Actuate the gripper (simplified 1-DOF fingers; the real 4-bar needs a loop
    closure URDF cannot express).

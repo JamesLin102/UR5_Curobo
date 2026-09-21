@@ -1,2 +1,7 @@
 __pycache__/
 *.py[cod]
+
+# This tree lives on a FUSE mount, which leaves these behind whenever a file is
+# replaced while something still has it open (e.g. editing scene_def.py while
+# the sim is running). They are not project files.
+.fuse_hidden*
