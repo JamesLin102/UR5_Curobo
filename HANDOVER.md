@@ -410,6 +410,9 @@ scripts/
     base.py                 SceneSpec + WatchBox: what a scene must and may
                             define. The contract both processes build from.
     demo_cube.py            the shipped scene. Copy this to make your own.
+    baseline.py             demo_cube minus the body the cameras have to
+                            find. The control run: if this fails, the
+                            problem is not the obstacle.
     __init__.py             load(name) -> SceneSpec, available()
   rig.py                    what is NOT the scene: robots, SIM_DT, host/port
   planner_server.py         cuRobo 0.8: planning + mapping service
@@ -441,8 +444,14 @@ to discover — and `watch` names volumes to report voxel counts for, which is
 how you tell whether the map actually found something.
 
 The two processes never exchange geometry, so they must load the same scene.
-A plan request carries its scene name and the server refuses one it is not
-running, rather than silently planning against a different world.
+The client sends its scene name when it connects and stops before building the
+stage if the server is running a different one, rather than silently planning
+against a different world.
+
+When plans start failing, run `--scene baseline` before touching the obstacle.
+It keeps the table, the cameras and the map (~18 000 voxels of table surface)
+and removes only the thing the cameras are supposed to discover, so a failure
+there is never the obstacle's fault. That is what caught the target markers.
 
 Git repo since the baseline commit. The overhead camera went in on the
 `overhead-camera` branch.
