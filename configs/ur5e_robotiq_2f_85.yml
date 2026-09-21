@@ -1,0 +1,243 @@
+robot_cfg:
+  kinematics:
+    add_object_link: false
+    asset_root_path: /media/eencku/2TBDATA/yusian-ubuntu/UR5_curobo/assets/robot/ur_description
+    base_link: base_link
+    collision_link_names: [shoulder_link, upper_arm_link, forearm_link, wrist_1_link,
+      wrist_2_link, wrist_3_link, tool0, robotiq_arg2f_base_link, left_outer_knuckle,
+      left_outer_finger, left_inner_finger, left_inner_knuckle, right_outer_knuckle,
+      right_outer_finger, right_inner_finger, right_inner_knuckle, camera_mount]
+    collision_sphere_buffer: 0.0
+    collision_spheres:
+      shoulder_link:
+      - center: [0.0, 0.0, 0.0]
+        radius: 0.1
+      upper_arm_link:
+      - center: [-0.416, -0.0, 0.143]
+        radius: 0.078
+      - center: [-0.015, 0.0, 0.134]
+        radius: 0.077
+      - center: [-0.14, 0.0, 0.138]
+        radius: 0.062
+      - center: [-0.285, -0.001, 0.139]
+        radius: 0.061
+      - center: [-0.376, 0.001, 0.138]
+        radius: 0.077
+      - center: [-0.222, 0.001, 0.139]
+        radius: 0.061
+      - center: [-0.055, 0.008, 0.14]
+        radius: 0.07
+      - center: [-0.001, -0.002, 0.143]
+        radius: 0.08
+      forearm_link:
+      - center: [-0.01, 0.002, 0.031]
+        radius: 0.072
+      - center: [-0.387, 0.0, 0.014]
+        radius: 0.057
+      - center: [-0.121, -0.0, 0.006]
+        radius: 0.057
+      - center: [-0.206, 0.001, 0.007]
+        radius: 0.057
+      - center: [-0.312, -0.001, 0.006]
+        radius: 0.056
+      - center: [-0.057, 0.003, 0.008]
+        radius: 0.065
+      - center: [-0.266, 0.0, 0.006]
+        radius: 0.057
+      - center: [-0.397, -0.001, -0.018]
+        radius: 0.052
+      - center: [-0.164, -0.0, 0.007]
+        radius: 0.057
+      wrist_1_link:
+      - center: [-0.0, 0.0, -0.009]
+        radius: 0.047
+      - center: [-0.0, 0.0, -0.052]
+        radius: 0.047
+      - center: [-0.002, 0.027, -0.001]
+        radius: 0.045
+      - center: [0.001, -0.01, 0.0]
+        radius: 0.046
+      wrist_2_link:
+      - center: [0.0, -0.01, -0.001]
+        radius: 0.047
+      - center: [0.0, 0.008, -0.001]
+        radius: 0.047
+      - center: [0.001, -0.001, -0.036]
+        radius: 0.047
+      - center: [0.001, -0.03, -0.0]
+        radius: 0.047
+      wrist_3_link:
+      - center: [0.001, 0.001, -0.029]
+        radius: 0.043
+      tool0:
+      - center: [0.001, 0.001, 0.05]
+        radius: -0.01
+      robotiq_arg2f_base_link:
+      - center: [-0.00023580169363413006, -0.0008403446990996599, 0.03248121589422226]
+        radius: 0.04567701369524002
+      - center: [0.0003453864192124456, 0.03297397866845131, 0.060456596314907074]
+        radius: 0.008827855810523033
+      - center: [0.0008051511249504983, 0.012591926380991936, 0.0757165402173996]
+        radius: 0.01646936871111393
+      - center: [0.0003546836960595101, -0.014976206235587597, 0.07335023581981659]
+        radius: 0.01906103640794754
+      left_outer_knuckle:
+      - center: [0.002112396527081728, 0.025666603818535805, 0.003013808047398925]
+        radius: 0.01482407096773386
+      - center: [0.00029191162320785224, 0.0006354652578011155, -0.00010041036875918508]
+        radius: 0.010175332427024841
+      left_outer_finger:
+      - center: [0.0005109060439281166, 0.0005491687916219234, 0.01000602263957262]
+        radius: 0.016939347609877586
+      - center: [0.00043025315972045064, 0.004131521563977003, 0.03857569023966789]
+        radius: 0.016561655327677727
+      - center: [-0.010614207945764065, 0.008189843036234379, 0.025318823754787445]
+        radius: 0.002231281017884612
+      left_inner_finger:
+      - center: [-0.0003195234457962215, -0.00186782272066921, -0.00017957069212570786]
+        radius: 0.009078859351575375
+      - center: [0.00023621319269295782, -0.016469383612275124, 0.009102328680455685]
+        radius: 0.012721630744636059
+      - center: [0.0004699401615653187, -0.01508415024727583, 0.03306031599640846]
+        radius: 0.011162158101797104
+      left_inner_knuckle:
+      - center: [-0.019500000402331352, 1.3436731023830362e-05, 0.009189755655825138]
+        radius: 0.0020000000949949026
+      - center: [0.017000000923871994, 0.018710510805249214, 0.018732881173491478]
+        radius: 0.0020000000949949026
+      - center: [0.012000000104308128, 0.035229384899139404, 0.047011807560920715]
+        radius: 0.0020000000949949026
+      - center: [0.016016345471143723, 0.008987492881715298, 0.0012843888252973557]
+        radius: 0.0020000000949949026
+      - center: [-0.0040781693533062935, 0.01870868168771267, 0.031143661588430405]
+        radius: 0.0020000000949949026
+      - center: [-0.012000000104308128, 0.040258146822452545, 0.04389360547065735]
+        radius: 0.0020000000949949026
+      right_outer_knuckle:
+      - center: [-2.80328076769365e-05, 0.027042366564273834, 0.0020042320247739553]
+        radius: 0.01315779983997345
+      - center: [0.0012513836845755577, 0.0028013023547828197, -0.0008719938341528177]
+        radius: 0.010039066895842552
+      right_outer_finger:
+      - center: [-0.0004127755237277597, 0.0053947395645082, 0.03835661709308624]
+        radius: 0.016222385689616203
+      - center: [0.00024980740272440016, 0.0022311725188046694, 0.0081932432949543]
+        radius: 0.015979982912540436
+      right_inner_finger:
+      - center: [-0.00011789449490606785, -0.0013419759925454855, 0.0004446546663530171]
+        radius: 0.00920808780938387
+      - center: [0.0008022573310881853, -0.01572369784116745, 0.012312234379351139]
+        radius: 0.013944142498075962
+      - center: [-0.00029950248426757753, -0.014193922281265259, 0.0359109602868557]
+        radius: 0.009567433968186378
+      right_inner_knuckle:
+      - center: [0.013500000350177288, 0.03649865835905075, 0.04272623732686043]
+        radius: 0.0020000000949949026
+      - center: [0.002838977612555027, 0.018694868311285973, 0.03112749010324478]
+        radius: 0.0020000000949949026
+      - center: [-0.014545599929988384, 0.012480443343520164, 0.0053741056472063065]
+        radius: 0.0020000000949949026
+      - center: [0.01441562082618475, -0.0031155161559581757, 0.00559081370010972]
+        radius: 0.0020000000949949026
+      - center: [0.012580139562487602, 0.021424295380711555, 0.015846012160182]
+        radius: 0.0020000000949949026
+      - center: [-0.015070619061589241, 0.011240893974900246, 0.022400010377168655]
+        radius: 0.0020000000949949026
+      - center: [-0.012000000104308128, 0.026361828669905663, 0.03759986162185669]
+        radius: 0.0020000000949949026
+      camera_mount:
+      - center: [0.0, -0.03, 0.0]
+        radius: 0.018
+      - center: [0.0, 0.0, 0.0]
+        radius: 0.018
+      - center: [0.0, 0.03, 0.0]
+        radius: 0.018
+    cspace:
+      acceleration_scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      cspace_distance_weight: [1.0, 1.0, 1.0, 1.5, 1.5, 1.5]
+      default_joint_position: [0.0, -2.2, 1.9, -1.383, -1.57, 0.0]
+      jerk_scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      joint_names: [shoulder_pan_joint, shoulder_lift_joint, elbow_joint, wrist_1_joint,
+        wrist_2_joint, wrist_3_joint]
+      max_acceleration: [10.0, 10.0, 10.0, 10.0, 10.0, 10.0]
+      max_jerk: [500.0, 500.0, 500.0, 500.0, 500.0, 500.0]
+      null_space_maximum_distance: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      null_space_weight: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      position_limit_clip: 0.0
+      velocity_scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    debug: null
+    external_asset_path: null
+    external_robot_configs_path: null
+    extra_collision_spheres: null
+    extra_links: {}
+    format_version: 2.0
+    grasp_contact_link_names: null
+    load_meshes: false
+    load_tool_frames_with_mesh: false
+    lock_joints: null
+    mesh_link_names: [base_link_inertia, shoulder_link, upper_arm_link, forearm_link,
+      wrist_1_link, wrist_2_link, wrist_3_link, robotiq_arg2f_base_link, left_outer_knuckle,
+      left_outer_finger, left_inner_finger, left_inner_finger_pad, left_inner_knuckle,
+      right_outer_knuckle, right_outer_finger, right_inner_finger, right_inner_finger_pad,
+      right_inner_knuckle, camera_mount]
+    self_collision_buffer: {base_link_inertia: 0.0, camera_mount: 0.0, forearm_link: 0,
+      left_inner_finger: 0.0, left_inner_finger_pad: 0.0, left_inner_knuckle: 0.0,
+      left_outer_finger: 0.0, left_outer_knuckle: 0.0, right_inner_finger: 0.0, right_inner_finger_pad: 0.0,
+      right_inner_knuckle: 0.0, right_outer_finger: 0.0, right_outer_knuckle: 0.0,
+      robotiq_arg2f_base_link: 0.0, shoulder_link: 0.0, upper_arm_link: 0, wrist_1_link: 0,
+      wrist_2_link: 0, wrist_3_link: 0, tool0: 0.025}
+    self_collision_ignore:
+      base: [base_link]
+      base_link: [base_link_inertia, base]
+      base_link_inertia: [base_link, shoulder_link, upper_arm_link]
+      camera_link: [camera_mount]
+      camera_mount: [camera_link, left_inner_finger, left_inner_knuckle, left_outer_finger,
+        left_outer_knuckle, right_inner_finger, right_inner_knuckle, right_outer_finger,
+        right_outer_knuckle, robotiq_arg2f_base_link, tool0, wrist_3_link]
+      flange: [wrist_3_link, tool0]
+      forearm_link: [upper_arm_link, wrist_1_link, wrist_2_link, wrist_3_link]
+      grasp_frame: [robotiq_arg2f_base_link]
+      left_inner_finger: [left_outer_finger, left_inner_finger_pad, left_inner_knuckle,
+        camera_mount, right_outer_knuckle, right_outer_finger, right_inner_finger,
+        right_inner_finger_pad, right_inner_knuckle]
+      left_inner_finger_pad: [left_inner_finger, camera_mount, left_inner_knuckle,
+        right_outer_knuckle, right_outer_finger, right_inner_finger, right_inner_finger_pad,
+        right_inner_knuckle]
+      left_inner_knuckle: [robotiq_arg2f_base_link, camera_mount, right_outer_knuckle,
+        right_outer_finger, right_inner_finger, right_inner_finger_pad, right_inner_knuckle]
+      left_outer_finger: [left_outer_knuckle, left_inner_finger, camera_mount, left_inner_finger_pad,
+        left_inner_knuckle, right_outer_knuckle, right_outer_finger, right_inner_finger,
+        right_inner_finger_pad, right_inner_knuckle]
+      left_outer_knuckle: [robotiq_arg2f_base_link, left_outer_finger, camera_mount,
+        left_inner_finger, left_inner_finger_pad, left_inner_knuckle, right_outer_knuckle,
+        right_outer_finger, right_inner_finger, right_inner_finger_pad, right_inner_knuckle]
+      right_inner_finger: [right_outer_finger, right_inner_finger_pad, right_inner_knuckle,
+        camera_mount]
+      right_inner_finger_pad: [right_inner_finger, camera_mount, right_inner_knuckle]
+      right_inner_knuckle: [robotiq_arg2f_base_link, camera_mount]
+      right_outer_finger: [right_outer_knuckle, right_inner_finger, camera_mount,
+        right_inner_finger_pad, right_inner_knuckle]
+      right_outer_knuckle: [robotiq_arg2f_base_link, right_outer_finger, camera_mount,
+        right_inner_finger, right_inner_finger_pad, right_inner_knuckle]
+      robotiq_arg2f_base_link: [tool0, left_outer_knuckle, left_inner_knuckle, right_outer_knuckle,
+        right_inner_knuckle, grasp_frame, camera_mount, left_outer_finger, left_inner_finger,
+        left_inner_finger_pad, right_outer_finger, right_inner_finger, right_inner_finger_pad]
+      shoulder_link: [base_link_inertia, tool0, upper_arm_link]
+      tool0: [flange, robotiq_arg2f_base_link]
+      upper_arm_link: [forearm_link, shoulder_link, tool0]
+      wrist_1_link: [camera_mount, forearm_link, left_inner_finger, left_inner_finger_pad,
+        left_inner_knuckle, left_outer_finger, left_outer_knuckle, right_inner_finger,
+        right_inner_finger_pad, right_inner_knuckle, right_outer_finger, right_outer_knuckle,
+        robotiq_arg2f_base_link, tool0, wrist_2_link, wrist_3_link]
+      wrist_2_link: [camera_mount, left_inner_finger, left_inner_finger_pad, left_inner_knuckle,
+        left_outer_finger, left_outer_knuckle, right_inner_finger, right_inner_finger_pad,
+        right_inner_knuckle, right_outer_finger, right_outer_knuckle, robotiq_arg2f_base_link,
+        tool0, wrist_1_link, wrist_3_link]
+      wrist_3_link: [camera_mount, flange, left_inner_finger, left_inner_finger_pad,
+        left_inner_knuckle, left_outer_finger, left_outer_knuckle, right_inner_finger,
+        right_inner_finger_pad, right_inner_knuckle, right_outer_finger, right_outer_knuckle,
+        robotiq_arg2f_base_link, tool0, wrist_2_link]
+    tool_frames: [grasp_frame, camera_link]
+    urdf_path: /media/eencku/2TBDATA/yusian-ubuntu/UR5_curobo/assets/robot/ur_description/ur5e_robotiq_2f_85.urdf
+    use_external_assets: false
+    use_global_cumul: true

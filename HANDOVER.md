@@ -1,0 +1,360 @@
+# Handover — UR5e + cuRobo 0.8 + Isaac Sim
+
+Written 2026-09-21. Everything below was measured on this machine, not taken
+from documentation. Where a number appears, it came from a run whose command is
+given so you can reproduce it.
+
+---
+
+## 1. What this is
+
+A UR5e (optionally with a Robotiq 2F-85 gripper and a wrist-mounted RealSense
+D435i) driven by **cuRobo 0.8.0** inside **Isaac Sim 5.1**, with live volumetric
+mapping feeding obstacle data back to the motion planner.
+
+Environment: `conda activate curobo_isaaclab`
+(nvidia-curobo 0.8.0.post1.dev42, torch 2.7.0+cu128, Isaac Sim 5.1.0.0, RTX 5080)
+
+A second env, `curobo077_isaaclab`, holds cuRobo 0.7.7 for the older projects.
+**Do not mix them.** 0.8.0 is a full rewrite; no v1 API survives.
+
+---
+
+## 2. The hard constraint that shapes everything: Warp
+
+Isaac Sim 5.1 bundles **Warp 1.8.2**. cuRobo 0.8 needs **Warp >= 1.13**
+(it calls `wp.func(..., module=...)`, which 1.8.2 lacks). Warp restructured its
+package at 1.13, so:
+
+| Warp version | Isaac Sim | cuRobo 0.8 |
+|---|---|---|
+| 1.8.2 | works | `TypeError: func() got an unexpected keyword argument 'module'` |
+| 1.12.1 | works | fails |
+| 1.13 – 1.15 | `AttributeError: module 'warp.types' has no attribute 'array'` | works |
+
+**There is no version that satisfies both.** I checked the wheels individually.
+Importing cuRobo first to win `sys.modules` does not help — it just moves the
+breakage to Isaac Sim's entire extension stack (`core.api`, `core.prims`,
+`simulation_manager`, `replicator`, sensors all fail to start).
+
+### Consequence: two processes
+
+```
+scripts/planner_server.py     imports cuRobo,  gets Warp 1.15   (port 5599)
+        ^  JSON + raw float32 depth over a local socket (scripts/proto.py)
+        v
+scripts/isaacsim_ur5e_demo.py imports Isaac Sim only, gets Warp 1.8.2
+```
+
+`scripts/isaacsim_ur5e_demo.py` **must never import cuRobo.** If you add a
+cuRobo import there, everything dies in a confusing way.
+
+If NVIDIA ships an Isaac Sim built on Warp >= 1.13, this split can collapse back
+into one process; the planning logic is deliberately isolated in
+`planner_server.build()` and the plan/map handlers to make that easy.
+
+---
+
+## 3. Running it
+
+Two terminals. The server must be listening before the sim starts.
+
+```bash
+/home/eencku/anaconda3/envs/curobo_isaaclab/bin/python \
+  /media/eencku/2TBDATA/yusian-ubuntu/UR5_curobo/scripts/planner_server.py --robot ur5e_2f85
+```
+
+```bash
+DISPLAY=:1 /home/eencku/anaconda3/envs/curobo_isaaclab/bin/python \
+  /media/eencku/2TBDATA/yusian-ubuntu/UR5_curobo/scripts/isaacsim_ur5e_demo.py --robot ur5e_2f85
+```
+
+Useful flags: `--no-mapping` (both sides, for A/B), `--static` (demo only: hold
+the arm at HOME and just look through the camera), `--no-cuda-graph` (server).
+
+**If the sim connects but behaves strangely, check for a stale server first:**
+
+```bash
+ss -ltnp | grep 5599
+```
+
+A previous server holding the port makes the new one exit with
+`OSError: [Errno 98]` while the sim happily connects to the *old* code. This
+cost me a debugging cycle. Kill with `fuser -k 5599/tcp`.
+
+---
+
+## 4. Upstream bugs found in cuRobo 0.8 main (all worked around in-tree)
+
+1. **`RobotSegmenter` default `ops_dtype=torch.bfloat16` is unusable.** Its own
+   tensor check accepts only float16/float32, so the default always raises.
+   `RobotSegmenter.from_robot_file()` does not expose the parameter — construct
+   `RobotSegmenter(...)` directly with `ops_dtype=torch.float32`.
+
+2. **`Mapper.integrate()` dereferences `rgb_image` unconditionally** even though
+   colour is nominally optional — pass a dummy RGB tensor or it raises
+   `AttributeError: 'NoneType' object has no attribute 'shape'`.
+
+3. **`update_world()` applies one refresh late.** Measured: push grid-with-box,
+   plan → unaffected; push grid-without-box, plan → the box appears. Not the
+   root cause of anything here, but be aware.
+
+4. Isaac Sim side, not cuRobo: **its COLLADA importer segfaults** on the Robotiq
+   2F-85 `.dae` meshes (`libomniverse_asset_converter` → `tinyxml2`, exit 139,
+   no Python traceback). trimesh reads the same files fine, so
+   `tools/convert_2f85_meshes.py` re-exports them as `.obj`.
+
+---
+
+## 5. Two unit/convention traps that cost the most time
+
+### `depth_to_meter` defaults to 0.001
+
+`CameraObservation.depth_to_meter` assumes **millimetres**, because that is what
+RealSense hardware reports. Isaac Sim's `distance_to_image_plane` is already in
+**metres**. Without `depth_to_meter=1.0` the whole point cloud collapses to ~1 mm
+from the lens, lands inside the robot's own collision spheres, and the
+self-mask removes **100% of the image** — the map stays permanently empty while
+every log line looks healthy.
+
+**When you move to real hardware, take this back out.** The default is correct
+for a real D435i.
+
+### Isaac Sim's `Camera` takes ROS body axes, not raw USD
+
+cuRobo's mapper kernels use the optical convention (+Z forward, +X right,
++Y down — see `wp_raycast_pose_refine.py`, the ray is `((u-cx)/fx, (v-cy)/fy, 1)`).
+USD cameras look down their own −Z. But `isaacsim.sensors.camera.Camera` takes
+orientation in **ROS body axes** (view = +X, +Y left, +Z up), so the
+"obvious" 180°-about-X correction is a **no-op on the view axis** and leaves the
+camera staring sideways down its own wrist.
+
+The correct quaternion is `(w,x,y,z) = (0.5, 0.5, -0.5, 0.5)`, plus a −90° yaw
+baked into `camera_optical_joint` in the URDF so image-horizontal runs along the
+camera body's long edge.
+
+`attach_wrist_camera()` verifies all of this at runtime and prints it:
+
+```
+view in camera_link axes:      [0, -0, 1]    (want [0 0 1])
+image-right vs body long edge: dot = -1.000  (want -1.000)
+```
+
+The roll check is **signed** on purpose. An earlier version compared `|dot|`,
+which passes both +90° and −90° — i.e. it happily accepted an upside-down image.
+
+---
+
+## 6. Robot model
+
+cuRobo 0.8 ships **no UR5e config** (only `ur10e`), and no UR5e URDF either,
+though the ur5e meshes are still there. Also note the cuRobo **0.7.7 checkout at
+`/home/eencku/curobo-0.7.7` has 224 mesh files that are Git-LFS pointer stubs**
+(cloned without `git lfs pull`, and git-lfs is not installed). Planning never
+noticed because collision uses spheres from the YAML, not meshes. Fetch
+individual files through GitHub's `/raw/` path, which resolves LFS:
+
+```bash
+curl -sL -o out.dae "https://github.com/NVlabs/curobo/raw/v0.7.7/src/curobo/content/assets/robot/kinova/kortex_description/grippers/robotiq_2f_85/meshes/visual/robotiq_arg2f_85_outer_finger.dae"
+```
+
+### Regenerating the model
+
+```bash
+python tools/build_ur5e_2f85_urdf.py      # splice arm + 2F-85 + wrist camera
+python tools/clip_joint_limits.py assets/robot/ur_description/ur5e_robotiq_2f_85.urdf --deg 180
+python tools/build_ur5e_2f85_config.py    # collision spheres + cuRobo yml
+python tools/check_robot_cfg.py ur5e_robotiq_2f_85 ur5e_robotiq_2f_85.urdf
+```
+
+Order matters: the config builder reads the URDF. `.orig` backups of both URDFs
+sit beside them.
+
+### Joint limits are deliberately clipped to ±180°
+
+Stock UR5e URDF gives five of six joints ±360°. With 720° of range the planner
+picks IK branches that wind a wrist right round — legal, collision-free, ugly,
+and it eventually strands the arm somewhere the next target is unreachable.
+
+Measured over 60 cycles: **60/60 cycles touched a wound-up pose** before,
+**0/60** after, with **no cost** — same 0 failures, same 0.000 mm pose error,
+same median trajectory length. `shoulder_pan` peak went 310.6° → 158.6°.
+
+`configs/*.yml` also carry `cspace_distance_weight: [1,1,1,1.5,1.5,1.5]` to
+penalise wrist motion. `tools/ab_solution_spread.py` is the harness that
+measured this; re-run it if you change limits.
+
+### Gripper fingers are rigid
+
+The 2F-85 joints are fixed, matching cuRobo's own Kinova 2F-85 model. The real
+4-bar linkage needs a loop-closure joint URDF cannot express and PhysX handles
+badly. So: collision geometry yes, actuation no. `grasp_frame` sits at
+0.130324 m above the gripper base (summed along the finger chain).
+
+---
+
+## 7. Mapping: what works and what does not
+
+### Verified working
+
+`tools/` and the scratch probes established, with evidence:
+
+- Camera geometry, orientation and roll — verified numerically and by eye.
+- Self-masking — `0 on the robot` across entire runs.
+- Map builds and is stable — ~9000–12000 voxels, no erosion.
+- **Depth-fused ESDF genuinely blocks planning.** Minimal repro: synthetic
+  depth placing a wall across the route → `plan_pose` FAILED, while the same
+  planner with no map returned n=121. The pipeline is sound end to end.
+- **A/B on the live sim finally separates** (see below).
+
+### The current demo result
+
+`scene_def.DRAG_CUBE` is an obstacle that exists **only in Isaac Sim** — the
+planner is never told about it. Same scene, same obstacle, only difference is
+whether mapping is on:
+
+| | trajectory (waypoints) |
+|---|---|
+| `--no-mapping` | 101 121 81 **81 81 81 81 81** — drives straight through |
+| mapping on | 101 121 81 **blocked ×5** — refuses |
+
+Reproduced twice. 495 voxels inside the obstacle's own bounding box, all from
+the wrist camera. **This is the proof that live mapping drives avoidance.**
+
+### Why the demo is fragile (read this before changing the obstacle)
+
+Two measured constraints fight each other:
+
+```
+camera can only map up to  ~0.40 m   (roughly its own altitude; it never sees
+                                      anything above itself)
+route only diverts above   ~0.45 m   (for a narrow post at that location)
+```
+
+Proof the ceiling is real: raising the obstacle from 0.50 m to 0.70 m added
+**zero** voxels inside its bounding box (618 → 618). Height above the camera is
+simply invisible.
+
+The working shape — `0.12 × 0.35 × 0.35` at `x=0.30` — resolves this by being
+**low and wide** rather than tall: entirely inside what the camera can see,
+while blocking laterally.
+
+The size window is narrow, because the mapped obstacle is fatter than the real
+one (ESDF cell size + collision activation distance):
+
+| size | live result |
+|---|---|
+| 0.10 × 0.26 × 0.30 | no effect |
+| 0.11 × 0.31 × 0.33 | no effect |
+| **0.12 × 0.35 × 0.35** | **blocked (works)** |
+| 0.12 × 0.35 × 0.50 (tall post) | no effect — top invisible |
+
+With exact geometry this size *detours* (121 vs 81 waypoints); through the
+camera it blocks outright. **I did not find a size that reliably produces a
+detour rather than a block.**
+
+### Mapper settings, and why
+
+`scene_def.MAPPER` — all of these were wrong at some point and cost a run each:
+
+- `decay_factor: 1.0` — this is applied to **every voxel every frame**, not a
+  time constant. 0.99 eroded the map 9456 → 6946 voxels over 550 frames; 0.3
+  wiped it within a few frames. Blind decay eats geometry the camera cannot
+  see, which is never what you want. Clearing belongs to frustum decay.
+- `frustum_decay_factor: 1.0` — decay for voxels the camera looks *through*,
+  i.e. the honest "I can see that spot and it is empty now" signal. This is
+  what clears an object's old position after it moves. **It is currently 1.0 in
+  `scene_def.py`, i.e. disabled**, so the map only ever grows: fine for the
+  parked-cube A/B test, wrong for anything that moves. 0.97 was the last value
+  that cleared without over-eroding; 0.85 wiped surfaces faster than they could
+  be re-observed. Set it back to 0.97 before trusting the sweep.
+- `self_mask_margin: 0.12` — 0.05 is too tight for a wrist camera; leaked
+  gripper pixels get fused and then the robot's own start state reads as in
+  collision, after which every plan fails.
+
+### Depth/pose synchronisation
+
+Isaac Sim's depth annotator trails the physics by a step or two. Pairing a frame
+with the *current* joint state misaligns the self-mask and the arm smears its own
+image into the map as phantom obstacles — the logs showed 0 self-hits during the
+slow scan, then hundreds once trajectory playback started.
+
+`--depth-lag` (default 2) compensates by pairing depth with the pose from N
+steps back. An earlier fix gated fusion on "arm is stationary", which works but
+**starves the map** (420 voxels instead of 6500) — do not go back to that.
+
+On real hardware the D435i has proper timestamps; align on those instead.
+
+---
+
+## 8. Next step, and why it matters more than tuning
+
+**Add a fixed overhead camera.** `MapperCfg` supports `num_cameras > 1` and the
+server is structured for it.
+
+A single wrist camera fundamentally cannot support cross-cell avoidance: its
+coverage is whatever the arm happens to sweep, it cannot see above its own
+altitude, and the measured footprint on the table during a full cycle is only
+`x 0.30..0.45, y -0.45..+0.30`. Everything outside that is a blind spot. The
+current demo only works because the obstacle was shaped and placed to fit inside
+that band — which is backwards from how a real cell should work.
+
+With a fixed camera watching the workspace, obstacle height and shape stop
+mattering, and the wrist camera can go back to what it is actually good for:
+close-range detail during grasping.
+
+After that, in rough priority order:
+
+1. Actuate the gripper (simplified 1-DOF fingers; the real 4-bar needs a loop
+   closure URDF cannot express).
+2. Re-check the detour-vs-block window once coverage is better — with a fixed
+   camera the mapped obstacle should match reality more closely.
+3. Consider pinning the cuRobo checkout. `/home/eencku/curobo` is an **editable
+   install sitting on `main`, 42 commits past the v0.8.0 tag** — a `git pull`
+   silently changes behaviour. Current commit was `8e734f3`.
+
+---
+
+## 9. Files
+
+```
+scripts/
+  scene_def.py              obstacles, targets, camera, mapper settings.
+                            Imported by BOTH processes - single source of truth.
+  planner_server.py         cuRobo 0.8: planning + mapping service
+  isaacsim_ur5e_demo.py     Isaac Sim client. Must not import cuRobo.
+  proto.py                  length-prefixed framing (depth frames are 1.2 MB)
+
+tools/
+  build_ur5e_2f85_urdf.py   splice UR5e + 2F-85 + wrist camera
+  build_ur5e_2f85_config.py collision spheres + cuRobo yml
+  clip_joint_limits.py      ±360° -> ±180°, keeps .orig backups
+  convert_2f85_meshes.py    .dae -> .obj (Isaac Sim's COLLADA importer crashes)
+  convert_v1_robot_yaml.py  cuRobo v1 -> v2 robot yaml schema
+  check_robot_cfg.py        smoke test: FK -> planner build -> plan_pose
+  ab_solution_spread.py     headless harness: failure rate + joint wander
+  bench_mapper.py           mapper integrate/ESDF timing
+```
+
+Not a git repo. Worth doing before further work.
+
+---
+
+## 10. Measured reference numbers
+
+Useful as regression baselines.
+
+| | |
+|---|---|
+| Planning (arm only) | 23–31 ms, 121 waypoints |
+| Planning (2F-85, static scene) | 28 ms median, 61 ms max |
+| Planning (2F-85 + live voxel map) | 43 ms median, 99 ms max |
+| Mapper integrate (640×480, incl. self-mask + filter) | 1.61 ms/frame |
+| Mapper ESDF + `update_world` | 1.3 ms (compute_esdf alone 0.1 ms) |
+| Map memory | ~20 MB |
+| Trajectory tracking error in sim | median 0.09°, 99th pct 0.44° |
+| Arm's travel corridor | z 0.4–0.6 m |
+| Camera table footprint over a full cycle | x 0.30–0.45, y −0.45–+0.30 |
+
+First call of anything Warp-backed includes JIT compilation — ESDF's first call
+is ~450 ms, then 1 ms. Do not benchmark cold.
