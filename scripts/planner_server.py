@@ -390,7 +390,20 @@ def main():
 
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    srv.bind((HOST, PORT))
+    try:
+        srv.bind((HOST, PORT))
+    except OSError as exc:
+        # Closing the Isaac Sim window does not stop this process, so the
+        # usual way to hit this is a server left over from the last run. The
+        # trap is that the new server dies here while the sim happily connects
+        # to the OLD one and plans against whatever scene THAT loaded.
+        raise SystemExit(
+            f"[planner] cannot bind {HOST}:{PORT} ({exc}).\n"
+            f"[planner] A previous planner_server is probably still running -- "
+            f"closing the sim window does not stop it.\n"
+            f"[planner]   ss -ltnp | grep {PORT}     # see what holds it\n"
+            f"[planner]   fuser -k {PORT}/tcp        # stop it"
+        ) from exc
     srv.listen(1)
     print(f"[planner] listening on {HOST}:{PORT}", flush=True)
 
