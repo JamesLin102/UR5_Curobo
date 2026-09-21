@@ -52,7 +52,7 @@ simulation_app = SimulationApp({"headless": False, "width": 1600, "height": 900}
 
 import numpy as np  # noqa: E402
 import omni.kit.commands  # noqa: E402
-from pxr import Gf, PhysxSchema, UsdGeom, UsdLux  # noqa: E402
+from pxr import PhysxSchema, UsdGeom, UsdLux  # noqa: E402
 
 from isaacsim.asset.importer.urdf._urdf import UrdfJointTargetType  # noqa: E402
 from isaacsim.core.api import World  # noqa: E402
@@ -426,7 +426,7 @@ def main():
 
     def q_now():
         q_sim = robot.get_joint_positions()
-        return [float(q_sim[sim_names.index(j)]) for j in curobo_names]
+        return [float(q_sim[i]) for i in sim_to_curobo]
 
     q_history = []
 
