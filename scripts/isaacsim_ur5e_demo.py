@@ -485,8 +485,13 @@ def main():
 
     print("[demo] -------------------------------------------------------------")
     print(f"[demo]  Drag /World/{DRAG_CUBE[0]} into the arm's path in the viewport.")
-    print("[demo]  The planner is never told where it is - the wrist camera")
-    print("[demo]  has to find it, and the arm should route around it.")
+    print("[demo]  The planner is never told where it is.")
+    if cams:
+        print(f"[demo]  The cameras ({', '.join(cams)}) have to find it, and the")
+        print("[demo]  arm should route around it.")
+    else:
+        print("[demo]  Mapping is off, so nothing can find it: the arm will")
+        print("[demo]  drive straight through. This is the A/B baseline.")
     print("[demo] -------------------------------------------------------------")
 
     if ARGS.static:

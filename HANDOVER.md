@@ -216,14 +216,17 @@ badly. So: collision geometry yes, actuation no. `grasp_frame` sits at
 
 - Camera geometry, orientation and roll — verified numerically and by eye.
 - Self-masking — `0 on the robot` across entire runs.
-- Map builds and is stable — ~17000–21000 voxels with both cameras (~9000–12000
-  with the wrist alone), bounded by frustum decay rather than growing.
+- Map builds and is stable — with both cameras it rises for roughly 1000 fused
+  frames and then plateaus at **26 000–31 000 voxels** for the rest of the run
+  (~9000–12000 with the wrist alone). Bounded by frustum decay, not growing.
 - **Depth-fused ESDF genuinely blocks planning.** Minimal repro: synthetic
   depth placing a wall across the route → `plan_pose` FAILED, while the same
   planner with no map returned n=121. The pipeline is sound end to end.
 - **A/B on the live sim finally separates** (see below).
-- **Avoidance produces a stable detour**, not just a refusal: 43 consecutive
-  cycles on the 121-waypoint route, 0 failures.
+- **Avoidance produces a stable detour**, not just a refusal. Longest run
+  measured: 71 plans, **0 failures**, 69 of them on a detour route (58 + 9 at
+  121 waypoints, 2 at 161), over 3610 fused frames. `0 on the robot` in every
+  one of its 361 map reports.
 
 ### The current demo result: a stable detour
 
@@ -311,9 +314,9 @@ take advantage of it, because low-and-wide already gives a stable detour.
   monotonically to 75 412 voxels (healthy is 9 000–12 000) and self-mask
   artifacts accumulated until one lodged inside the arm permanently, after
   which every plan failed and never recovered. At 0.97 the same run stays
-  between 16 000 and 21 300 voxels and recovers instead of deadlocking — see
-  section 8. 0.85 was too aggressive: it wiped surfaces faster than they could
-  be re-observed.
+  between 16 000 and 21 300 voxels and recovers instead of deadlocking. Over a longer
+  run it settles at 26 000–31 000 and stays there. 0.85 was too aggressive: it
+  wiped surfaces faster than they could be re-observed.
 - `self_mask_margin: 0.12` — 0.05 is too tight for a wrist camera; leaked
   gripper pixels get fused and then the robot's own start state reads as in
   collision, after which every plan fails.
@@ -435,10 +438,13 @@ Useful as regression baselines.
 | Planning (2F-85 + live voxel map) | 43 ms median, 99 ms max |
 | Mapper integrate (640×480, incl. self-mask + filter) | 1.61 ms/frame |
 | Mapper ESDF + `update_world` | 1.3 ms (compute_esdf alone 0.1 ms) |
-| Map memory | ~20 MB |
-| Trajectory tracking error in sim | median 0.09°, 99th pct 0.44° |
+| Map memory | 22 MB (both cameras) |
+| Map size, both cameras | 26 000–31 000 voxels after ~1000 frames, then flat |
+| Trajectory tracking error in sim | median 0.09°, 99th pct 0.44° (0.08–0.27 over 71 plans) |
 | Arm's travel corridor | z 0.4–0.6 m |
-| Camera table footprint over a full cycle | x 0.30–0.45, y −0.45–+0.30 |
+| Wrist camera table footprint over a full cycle | x 0.30–0.45, y −0.45–+0.30 |
+| Overhead camera footprint at table level | x −0.27–+0.97, y −0.82–+0.82 |
+| Full demo, both cameras, 3610 frames | 71 plans, 0 failures, 69 detours, 0 self-hits |
 
 First call of anything Warp-backed includes JIT compilation — ESDF's first call
 is ~450 ms, then 1 ms. Do not benchmark cold.
