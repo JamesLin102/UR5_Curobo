@@ -261,15 +261,29 @@ at all**:
 
 | | plans failed | longest failure streak | voxels above the table |
 |---|---|---|---|
-| markers rendered | **193 / 199** | 82 | 30 — `x 0.44..0.45, y ±0.33, z 0.24..0.28` |
-| markers as `guide` | **0 / 56** | 0 | 0 |
+| markers as geometry | **193 / 199** | 82 | 30 — `x 0.44..0.45, y ±0.33, z 0.24..0.28` |
+| markers as `guide` | **0 / 56** | 0 | 0 — but invisible to you as well |
+| markers as overlay | **0 / 33** | 0 | 0 — and visible in the viewport |
 
 That voxel extent is the markers themselves (`0.45, ±0.32, 0.25`, 0.04 cube).
 With the fix the same scene plans cleanly 53 times in a row at 81 waypoints.
 
-The fix is `UsdGeom.Imageable(prim).CreatePurposeAttr(UsdGeom.Tokens.guide)` —
-USD's own term for geometry that is an authoring aid rather than part of the
-scene. Render products skip it.
+The fix went through two rounds, and the first one was half a fix.
+
+`UsdGeom.Imageable(prim).CreatePurposeAttr(UsdGeom.Tokens.guide)` — USD's own
+term for geometry that is an authoring aid rather than part of the scene — does
+keep them out of the depth image. But guides are hidden in the **viewport**
+too, so the map became correct and there was nothing left for a person to look
+at. Correct map, unusable demo.
+
+They are now drawn as a **viewport overlay** instead, via
+`isaacsim.util.debug_draw` (`draw_targets()` in the demo): a point plus a small
+axis cross at each goal. An overlay is produced by a separate pass that render
+products do not sample, so it cannot reach a depth annotator by construction
+rather than by configuration — visible to you, invisible to the cameras.
+
+The lesson generalises: a goal marker should not be scene geometry at all.
+Anything added purely to be looked at belongs in an overlay.
 
 **This bug predates the overhead camera and poisoned every earlier
 obstacle-size measurement**, including the table in the next section: those

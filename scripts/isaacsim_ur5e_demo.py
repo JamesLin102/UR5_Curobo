@@ -65,6 +65,7 @@ from isaacsim.core.prims import SingleArticulation  # noqa: E402
 from isaacsim.core.utils.types import ArticulationAction  # noqa: E402
 from isaacsim.core.utils.viewports import set_camera_view  # noqa: E402
 from isaacsim.sensors.camera import Camera  # noqa: E402
+from isaacsim.util.debug_draw import _debug_draw  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 URDF = f"{ROOT}/{ROBOTS[ARGS.robot]['urdf']}"
@@ -162,26 +163,22 @@ def build_stage(world):
                 color=np.array(colour),
             )
         )
-    for i, t in enumerate(SCENE.targets):
-        VisualCuboid(
-            prim_path=f"/World/targets/target_{i}",
-            name=f"target_{i}",
-            position=np.array(t[:3]),
-            scale=np.array([0.04, 0.04, 0.04]),
-            color=np.array([0.05, 0.43, 0.62]),
-        )
-        # These markers only show where the tool is being sent. They MUST NOT
-        # reach the depth image: the cameras fuse them into the map as
-        # obstacles sitting exactly on the goals, and then every plan fails
-        # because the goal is inside an obstacle. Measured with no other
-        # obstacle in the scene at all: 193 of 199 plans failed, and the only
-        # voxels above the table were these two markers.
-        #
-        # "guide" is USD's own word for geometry that is an authoring aid
-        # rather than part of the scene, and render products skip it.
-        UsdGeom.Imageable(
-            world.stage.GetPrimAtPath(f"/World/targets/target_{i}")
-        ).CreatePurposeAttr(UsdGeom.Tokens.guide)
+    # Target markers are drawn as a VIEWPORT OVERLAY, not as scene geometry.
+    #
+    # They only show where the tool is being sent, and they must not reach the
+    # depth image: as geometry the cameras fuse them into the map as obstacles
+    # sitting exactly on the goals, and then every plan fails because the goal
+    # is inside an obstacle. Measured with no other obstacle in the scene at
+    # all: 193 of 199 plans failed, and the only voxels above the table were
+    # these two markers.
+    #
+    # USD's `purpose = guide` also keeps them out of the depth image, and was
+    # the first fix here, but guides are hidden in the viewport too -- which
+    # left a correct map and nothing for a person to look at. An overlay is
+    # drawn by a separate pass that render products do not sample, so it solves
+    # both halves: visible to you, invisible to the cameras. `baseline` still
+    # reporting "0 tall []" is what proves the second half.
+    draw_targets(SCENE.targets)
 
     # The bodies the planner is never told about. VisualCuboids, not physics
     # bodies, so dragging one in the viewport does not fight PhysX -- it still
@@ -204,6 +201,30 @@ def build_stage(world):
     light.CreateIntensityAttr(2500)
     light.CreateAngleAttr(1.0)
     return prim_path, bodies
+
+
+_DRAW = _debug_draw.acquire_debug_draw_interface()
+
+
+def draw_targets(targets):
+    """Mark each goal in the viewport without putting anything in the scene.
+
+    Points plus a small axis cross, so a goal reads as a location rather than a
+    stray dot. Redrawn from scratch each time, because the overlay accumulates.
+    """
+    _DRAW.clear_points()
+    _DRAW.clear_lines()
+    blue = (0.05, 0.43, 0.62, 1.0)
+    _DRAW.draw_points([tuple(t[:3]) for t in targets], [blue] * len(targets),
+                      [14.0] * len(targets))
+    arm = 0.03
+    starts, ends = [], []
+    for t in targets:
+        x, y, z = t[:3]
+        for dx, dy, dz in ((arm, 0, 0), (0, arm, 0), (0, 0, arm)):
+            starts.append((x - dx, y - dy, z - dz))
+            ends.append((x + dx, y + dy, z + dz))
+    _DRAW.draw_lines(starts, ends, [blue] * len(starts), [2.0] * len(starts))
 
 
 def attach_wrist_camera(world, prim_path):
