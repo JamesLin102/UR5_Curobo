@@ -69,8 +69,15 @@ DISPLAY=:1 /home/eencku/anaconda3/envs/curobo_isaaclab/bin/python \
   /media/eencku/2TBDATA/yusian-ubuntu/UR5_curobo/scripts/isaacsim_ur5e_demo.py --robot ur5e_2f85
 ```
 
-Useful flags: `--no-mapping` (both sides, for A/B), `--static` (demo only: hold
-the arm at HOME and just look through the camera), `--no-cuda-graph` (server).
+Useful flags: `--no-mapping` (both sides, for A/B), `--no-overhead` (demo only:
+wrist camera alone, for A/B against the fixed one), `--static` (demo only: hold
+the arm at HOME and just look through the cameras), `--no-cuda-graph` (server).
+
+The server names its cameras at startup, so a mismatch is visible immediately:
+
+```
+[planner] cameras: wrist (camera_link), overhead (fixed)
+```
 
 **If the sim connects but behaves strangely, check for a stale server first:**
 
@@ -99,7 +106,15 @@ cost me a debugging cycle. Kill with `fuser -k 5599/tcp`.
    plan → unaffected; push grid-without-box, plan → the box appears. Not the
    root cause of anything here, but be aware.
 
-4. Isaac Sim side, not cuRobo: **its COLLADA importer segfaults** on the Robotiq
+4. **`RobotSegmenter` freezes its projection rays on the first frame.**
+   `get_pointcloud_from_depth()` calls `update_camera_projection()` only while
+   `_projection_rays is None`, so the rays are built once from whichever camera
+   arrives first and never rebuilt. Sharing one segmenter across two cameras
+   therefore self-masks the second one with the first one's intrinsics —
+   silently, if the resolutions happen to match. `planner_server.Mapping` keeps
+   **one segmenter per camera** for this reason.
+
+5. Isaac Sim side, not cuRobo: **its COLLADA importer segfaults** on the Robotiq
    2F-85 `.dae` meshes (`libomniverse_asset_converter` → `tinyxml2`, exit 139,
    no Python traceback). trimesh reads the same files fine, so
    `tools/convert_2f85_meshes.py` re-exports them as `.obj`.
@@ -261,13 +276,16 @@ detour rather than a block.**
   time constant. 0.99 eroded the map 9456 → 6946 voxels over 550 frames; 0.3
   wiped it within a few frames. Blind decay eats geometry the camera cannot
   see, which is never what you want. Clearing belongs to frustum decay.
-- `frustum_decay_factor: 1.0` — decay for voxels the camera looks *through*,
+- `frustum_decay_factor: 0.97` — decay for voxels the camera looks *through*,
   i.e. the honest "I can see that spot and it is empty now" signal. This is
-  what clears an object's old position after it moves. **It is currently 1.0 in
-  `scene_def.py`, i.e. disabled**, so the map only ever grows: fine for the
-  parked-cube A/B test, wrong for anything that moves. 0.97 was the last value
-  that cleared without over-eroding; 0.85 wiped surfaces faster than they could
-  be re-observed. Set it back to 0.97 before trusting the sweep.
+  what clears an object's old position after it moves, and **it must stay below
+  1.0**. It was briefly 1.0; a full run measured what that costs: the map grew
+  monotonically to 75 412 voxels (healthy is 9 000–12 000) and self-mask
+  artifacts accumulated until one lodged inside the arm permanently, after
+  which every plan failed and never recovered. At 0.97 the same run stays
+  between 16 000 and 21 300 voxels and recovers instead of deadlocking — see
+  section 8. 0.85 was too aggressive: it wiped surfaces faster than they could
+  be re-observed.
 - `self_mask_margin: 0.12` — 0.05 is too tight for a wrist camera; leaked
   gripper pixels get fused and then the robot's own start state reads as in
   collision, after which every plan fails.
@@ -287,21 +305,56 @@ On real hardware the D435i has proper timestamps; align on those instead.
 
 ---
 
-## 8. Next step, and why it matters more than tuning
-
-**Add a fixed overhead camera.** `MapperCfg` supports `num_cameras > 1` and the
-server is structured for it.
+## 8. The fixed overhead camera
 
 A single wrist camera fundamentally cannot support cross-cell avoidance: its
 coverage is whatever the arm happens to sweep, it cannot see above its own
 altitude, and the measured footprint on the table during a full cycle is only
 `x 0.30..0.45, y -0.45..+0.30`. Everything outside that is a blind spot. The
-current demo only works because the obstacle was shaped and placed to fit inside
-that band — which is backwards from how a real cell should work.
+demo obstacle had to be shaped and placed to fit inside that band — backwards
+from how a real cell should work.
 
-With a fixed camera watching the workspace, obstacle height and shape stop
-mattering, and the wrist camera can go back to what it is actually good for:
-close-range detail during grasping.
+`scene_def.CAMERAS["overhead"]` adds a fixed camera 1.20 m above the cell
+looking straight down. Its footprint at table level is `y -0.82..+0.82`,
+`x -0.27..+0.97`, which covers the workspace and lands inside the mapper grid.
+
+### Measured: the altitude ceiling is gone
+
+A 0.70 m post (`0.12 x 0.35 x 0.70` at `x=0.30`), scan sweep only, no planning
+(`--static`), counting occupied voxels inside the post's own bounding box:
+
+| | voxels in map | in the post's bbox | **z reached** |
+|---|---|---|---|
+| `--no-overhead` | 7 765 | 362 | **0.01 – 0.36** |
+| both cameras | 17 708 | 473 | **0.01 – 0.69** |
+
+The wrist-only map stops dead at 0.36 m on a 0.70 m object — the ~0.40 m
+ceiling, exactly as section 7 predicted. With the fixed camera the map reaches
+0.69 m, i.e. the whole post. Tall-voxel extent went `z 0.16..0.39` →
+`z 0.16..0.70`. Both runs reported `0 on the robot`.
+
+Reproduce with `--static` on each side and compare the `INSIDE-CUBE z..` field.
+
+### How it is wired
+
+Each camera is integrated with its **own** `integrate()` call rather than
+batched: a fixed camera never moves, so batching would drag it into the
+depth-lag bookkeeping it does not need. Verified that two poses fused through
+separate calls land in one map exactly where the geometry predicts, with
+`num_cameras=1`.
+
+`scene_def` stores every camera as a cuRobo **optical** frame (+Z along the
+view). The demo derives the ROS body quaternion Isaac Sim wants, rather than
+storing a second set of magic numbers, and then checks the result against the
+prim's real transform — `dot = +1.000 (AGREE)` in the startup log. It raises
+rather than continuing if that check fails.
+
+### Still open
+
+The obstacle is still the 0.35 m slab that was tuned for wrist-only coverage.
+Now that height no longer has to suit the sensor, the detour-vs-block window
+from section 7 is worth re-opening with a natural obstacle — that is the first
+thing to do on top of this.
 
 After that, in rough priority order:
 
@@ -319,10 +372,12 @@ After that, in rough priority order:
 
 ```
 scripts/
-  scene_def.py              obstacles, targets, camera, mapper settings.
+  scene_def.py              obstacles, targets, CAMERAS, mapper settings.
                             Imported by BOTH processes - single source of truth.
   planner_server.py         cuRobo 0.8: planning + mapping service
   isaacsim_ur5e_demo.py     Isaac Sim client. Must not import cuRobo.
+                            Builds both cameras; derives the ROS body pose of
+                            the fixed one from its optical pose and checks it.
   proto.py                  length-prefixed framing (depth frames are 1.2 MB)
 
 tools/
@@ -336,7 +391,8 @@ tools/
   bench_mapper.py           mapper integrate/ESDF timing
 ```
 
-Not a git repo. Worth doing before further work.
+Git repo since the baseline commit. The overhead camera went in on the
+`overhead-camera` branch.
 
 ---
 

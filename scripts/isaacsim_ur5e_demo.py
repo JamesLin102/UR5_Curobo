@@ -23,13 +23,20 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from proto import recv_msg, send_msg  # noqa: E402
 from scene_def import (  # noqa: E402
-    CAMERA, CUBE_SWEEP, DEFAULT_ROBOT, DRAG_CUBE, HOME, HOST, OBSTACLES, PORT,
+    CAMERAS, CUBE_SWEEP, DEFAULT_ROBOT, DRAG_CUBE, HOME, HOST, OBSTACLES, PORT,
     ROBOTS, SCAN_POSES, SIM_DT, TARGETS,
 )
+
+# planner_server.py flushes every line; without the same here, this side's
+# output sits in the stdout buffer whenever it is redirected to a file, and the
+# demo looks hung next to a server that is visibly working.
+sys.stdout.reconfigure(line_buffering=True)
 
 _ap = argparse.ArgumentParser()
 _ap.add_argument("--robot", default=DEFAULT_ROBOT, choices=sorted(ROBOTS))
 _ap.add_argument("--no-mapping", action="store_true")
+_ap.add_argument("--no-overhead", action="store_true",
+                 help="wrist camera only, for A/B against the fixed camera")
 _ap.add_argument("--map-every", type=int, default=6, help="fuse a frame every N sim steps")
 _ap.add_argument("--move-cube", action="store_true",
                  help="sweep the cube along y instead of leaving it parked")
@@ -86,11 +93,12 @@ class Planner:
             )
         return header
 
-    def map_frame(self, q, depth, K):
+    def map_frame(self, q, depth, K, cam_name):
         send_msg(
             self.sock,
             {
                 "op": "map",
+                "cam": cam_name,
                 "q": list(map(float, q)),
                 "h": int(depth.shape[0]),
                 "w": int(depth.shape[1]),
@@ -174,13 +182,14 @@ def attach_wrist_camera(world, prim_path):
     which is the quaternion below. Verified at runtime by the check further
     down, which prints the view direction in camera_link axes.
     """
-    link = f"{prim_path}/{CAMERA['link']}"
+    spec = CAMERAS["wrist"]
+    link = f"{prim_path}/{spec['link']}"
     if not world.stage.GetPrimAtPath(link).IsValid():
         raise RuntimeError(f"{link} missing - rebuild the URDF with tools/build_ur5e_2f85_urdf.py")
 
     cam = Camera(
         prim_path=f"{link}/d435i",
-        resolution=(CAMERA["width"], CAMERA["height"]),
+        resolution=(spec["width"], spec["height"]),
         translation=np.array([0.0, 0.0, 0.0]),
         orientation=np.array([0.5, 0.5, -0.5, 0.5]),  # optical -> ROS body, wxyz
     )
@@ -188,9 +197,9 @@ def attach_wrist_camera(world, prim_path):
     cam.add_distance_to_image_plane_to_frame()
 
     aperture = 20.955  # USD default horizontal aperture, mm
-    focal = aperture / (2.0 * math.tan(math.radians(CAMERA["horizontal_fov_deg"]) / 2.0))
+    focal = aperture / (2.0 * math.tan(math.radians(spec["horizontal_fov_deg"]) / 2.0))
     cam.set_focal_length(focal / 10.0)  # Camera API works in cm
-    cam.set_clipping_range(CAMERA["near"], CAMERA["far"])
+    cam.set_clipping_range(spec["near"], spec["far"])
     # Verify, don't assume: a USD camera looks along its own -Z, but the
     # isaacsim Camera wrapper may already account for that. Compare the prim's
     # actual view direction against camera_link's optical +Z and say so.
@@ -218,12 +227,113 @@ def attach_wrist_camera(world, prim_path):
     # version compared magnitudes and happily passed the flipped one.
     print(f"[demo]   image-right vs body long edge: dot = "
           f"{float(np.dot(img_right, bar)):+.3f}  (want -1.000)")
-    print(f"[demo] wrist camera on {CAMERA['link']}: "
-          f"{CAMERA['width']}x{CAMERA['height']}, {CAMERA['horizontal_fov_deg']:.0f} deg HFOV")
+    print(f"[demo] wrist camera on {spec['link']}: "
+          f"{spec['width']}x{spec['height']}, {spec['horizontal_fov_deg']:.0f} deg HFOV")
     print(f"[demo] view-vs-optical dot = {dot:+.3f}  "
           f"({'AGREE' if dot > 0.9 else 'REVERSED' if dot < -0.9 else 'PERPENDICULAR'})")
     print(f"[demo]   usd camera view dir (world): {view.round(3)}")
     print(f"[demo]   camera_link +Z    (world): {optical.round(3)}")
+    return cam
+
+
+# Optical (+Z view, +X right, +Y down) -> ROS body (+X view, +Y left, +Z up),
+# as columns: body X = optical Z, body Y = -optical X, body Z = -optical Y.
+# R_body = R_optical @ this.
+OPTICAL_TO_ROS_BODY = np.array([
+    [0.0, -1.0, 0.0],
+    [0.0, 0.0, -1.0],
+    [1.0, 0.0, 0.0],
+])
+
+
+def _quat_to_matrix(q_wxyz):
+    """Rotation matrix whose COLUMNS are the frame's x, y, z axes in world."""
+    w, x, y, z = q_wxyz
+    return np.array([
+        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+    ])
+
+
+def _matrix_to_quat(m):
+    """(w, x, y, z) from a rotation matrix, branching on the largest term.
+
+    The trace branch alone loses precision, and divides by zero outright, for
+    rotations near 180 degrees -- which is exactly what a straight-down camera
+    is, so the branches matter here rather than being defensive boilerplate.
+    """
+    t = m[0][0] + m[1][1] + m[2][2]
+    if t > 0:
+        sq = math.sqrt(t + 1.0) * 2
+        return np.array([0.25 * sq, (m[2][1] - m[1][2]) / sq,
+                         (m[0][2] - m[2][0]) / sq, (m[1][0] - m[0][1]) / sq])
+    i = int(np.argmax([m[0][0], m[1][1], m[2][2]]))
+    if i == 0:
+        sq = math.sqrt(1.0 + m[0][0] - m[1][1] - m[2][2]) * 2
+        return np.array([(m[2][1] - m[1][2]) / sq, 0.25 * sq,
+                         (m[0][1] + m[1][0]) / sq, (m[0][2] + m[2][0]) / sq])
+    if i == 1:
+        sq = math.sqrt(1.0 + m[1][1] - m[0][0] - m[2][2]) * 2
+        return np.array([(m[0][2] - m[2][0]) / sq, (m[0][1] + m[1][0]) / sq,
+                         0.25 * sq, (m[1][2] + m[2][1]) / sq])
+    sq = math.sqrt(1.0 + m[2][2] - m[0][0] - m[1][1]) * 2
+    return np.array([(m[1][0] - m[0][1]) / sq, (m[0][2] + m[2][0]) / sq,
+                     (m[1][2] + m[2][1]) / sq, 0.25 * sq])
+
+
+def attach_overhead_camera(world):
+    """Fixed camera on a gantry above the cell, looking straight down.
+
+    scene_def stores the OPTICAL pose (+Z along the view), because that is what
+    cuRobo's mapper kernels consume and what the planner server hands to
+    CameraObservation verbatim. Isaac Sim wants ROS BODY axes, so the body
+    quaternion is DERIVED here instead of being written down a second time:
+    moving the camera in scene_def moves it here too, with no second set of
+    magic numbers to keep in sync.
+
+    This camera exists because a wrist camera cannot see above its own
+    altitude, which is what forced the demo obstacle to be shaped to suit the
+    sensor rather than the other way round.
+    """
+    spec = CAMERAS["overhead"]
+    pose = spec["pose"]
+    r_opt = _quat_to_matrix(pose[3:])
+    q_body = _matrix_to_quat(r_opt @ OPTICAL_TO_ROS_BODY)
+
+    path = "/World/overhead_cam"
+    cam = Camera(
+        prim_path=path,
+        resolution=(spec["width"], spec["height"]),
+        position=np.array(pose[:3]),
+        orientation=q_body,
+    )
+    cam.initialize()
+    cam.add_distance_to_image_plane_to_frame()
+
+    aperture = 20.955  # USD default horizontal aperture, mm
+    focal = aperture / (2.0 * math.tan(math.radians(spec["horizontal_fov_deg"]) / 2.0))
+    cam.set_focal_length(focal / 10.0)  # Camera API works in cm
+    cam.set_clipping_range(spec["near"], spec["far"])
+
+    # Verify, don't assume. The wrist camera's "obvious" 180-about-X correction
+    # turned out to be a no-op on the view axis, so every camera here states
+    # what it expects and checks it against the prim's real transform.
+    cache = UsdGeom.XformCache()
+    m_cam = cache.GetLocalToWorldTransform(world.stage.GetPrimAtPath(path))
+    r = m_cam.ExtractRotationMatrix()
+    view = -np.array([r[2][0], r[2][1], r[2][2]])  # USD camera looks down -Z
+    want = r_opt[:, 2]                             # optical +Z from scene_def
+    dot = float(np.dot(view, want))
+    print(f"[demo] overhead camera at {np.array(pose[:3]).round(3)}: "
+          f"{spec['width']}x{spec['height']}, {spec['horizontal_fov_deg']:.0f} deg HFOV")
+    print(f"[demo]   view dir (world): {view.round(3)}  want {want.round(3)}  "
+          f"dot = {dot:+.3f}  ({'AGREE' if dot > 0.99 else 'WRONG'})")
+    if dot < 0.99:
+        raise RuntimeError(
+            f"overhead camera is not pointing where scene_def says: view {view} "
+            f"vs optical +Z {want}. Fix the conversion, do not adjust the check."
+        )
     return cam
 
 
@@ -266,7 +376,11 @@ def main():
 
     robot = SingleArticulation(prim_path=prim_path, name="ur5e")
     world.scene.add(robot)
-    cam = None if ARGS.no_mapping else attach_wrist_camera(world, prim_path)
+    cams = {}
+    if not ARGS.no_mapping:
+        cams["wrist"] = attach_wrist_camera(world, prim_path)
+        if not ARGS.no_overhead:
+            cams["overhead"] = attach_overhead_camera(world)
     world.reset()
     robot.initialize()
 
@@ -288,13 +402,15 @@ def main():
     for _ in range(60):
         world.step(render=True)
 
-    K = None
-    if cam is not None:
-        for _ in range(10):  # let the annotator produce its first frame
+    intrinsics = {}
+    if cams:
+        for _ in range(10):  # let the annotators produce their first frame
             world.step(render=True)
-        K = cam.get_intrinsics_matrix()
-        print(f"[demo] intrinsics from Isaac Sim: fx={K[0,0]:.1f} fy={K[1,1]:.1f} "
-              f"cx={K[0,2]:.1f} cy={K[1,2]:.1f}")
+        for name, c in cams.items():
+            k = c.get_intrinsics_matrix()
+            intrinsics[name] = k
+            print(f"[demo] {name} intrinsics from Isaac Sim: fx={k[0,0]:.1f} "
+                  f"fy={k[1,1]:.1f} cx={k[0,2]:.1f} cy={k[1,2]:.1f}")
 
     def q_now():
         q_sim = robot.get_joint_positions()
@@ -312,25 +428,32 @@ def main():
         420 voxels instead of 6500). Compensating the lag instead keeps the
         coverage and the alignment.
 
-        Returns True if a frame was sent. The send is fire-and-forget, so this
-        says nothing about what the mapper made of it.
+        The lag applies to the FIXED camera too. It never moves, so its own
+        pose needs no correction, but the arm inside its view does -- and that
+        is what the self-mask is aligned against.
+
+        Returns how many frames were sent. The send is fire-and-forget, so this
+        says nothing about what the mapper made of them.
         """
-        if cam is None:
-            return False
+        if not cams:
+            return 0
         if require_still:
             v = robot.get_joint_velocities()
             if v is not None and float(np.abs(np.asarray(v)).max()) > 0.05:
-                return False
-        depth = grab_depth(cam)
-        if depth is None:
-            return False
+                return 0
         q_lagged = q_history[-1 - ARGS.depth_lag] if len(q_history) > ARGS.depth_lag \
             else q_now()
-        planner.map_frame(q_lagged, depth, K)
-        return True
+        sent = 0
+        for name, c in cams.items():
+            depth = grab_depth(c)
+            if depth is None:
+                continue
+            planner.map_frame(q_lagged, depth, intrinsics[name], name)
+            sent += 1
+        return sent
 
     # --- scan sweep: build a map before trusting it to plan ---------------
-    if cam is not None:
+    if cams:
         print("[demo] scanning the cell before planning...")
         fused = 0
         for pose in SCAN_POSES:
@@ -378,7 +501,7 @@ def main():
                 steps += 1
                 y = move_cube(cube, steps * SIM_DT)
                 world.step(render=True)
-                if cam is not None and steps % ARGS.map_every == 0:
+                if cams and steps % ARGS.map_every == 0:
                     fuse()
             print(f"[demo] plan #{plan_no} blocked - waiting "
                   f"| cube y={y:+.2f}" if y is not None else
@@ -398,7 +521,7 @@ def main():
             world.step(render=True)
             q_history.append(q_now())
             steps += 1
-            if cam is not None and steps % ARGS.map_every == 0:
+            if cams and steps % ARGS.map_every == 0:
                 fuse()
 
         for i in range(45):
@@ -407,7 +530,7 @@ def main():
             steps += 1
             move_cube(cube, steps * SIM_DT)
             world.step(render=True)
-            if cam is not None and i >= 15 and i % ARGS.map_every == 0:
+            if cams and i >= 15 and i % ARGS.map_every == 0:
                 fuse()
 
         want = traj[-1][curobo_to_sim]

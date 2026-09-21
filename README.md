@@ -15,6 +15,9 @@ tools/check_robot_cfg.py          smoke test: FK -> planner build -> plan_pose
 tools/bench_mapper.py             Mapper TSDF integrate + ESDF timing
 ```
 
+The Isaac Sim demo and its planner service live in `scripts/`; see HANDOVER.md
+for why they are two processes and how the cameras are set up.
+
 Verify:
 
     python tools/check_robot_cfg.py ur5e

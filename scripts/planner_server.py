@@ -32,7 +32,7 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from proto import recv_msg, send_msg  # noqa: E402
 from scene_def import (  # noqa: E402
-    CAMERA, DEFAULT_ROBOT, DRAG_CUBE, HOST, MAPPER, OBSTACLES, PORT, ROBOTS,
+    CAMERAS, DEFAULT_ROBOT, DRAG_CUBE, HOST, MAPPER, OBSTACLES, PORT, ROBOTS,
     SIM_DT,
 )
 
@@ -55,7 +55,11 @@ class Mapping:
 
     def __init__(self, robot_dict, kin):
         self.kin = kin
-        h, w = CAMERA["height"], CAMERA["width"]
+        # Buffers are sized for the largest camera; each frame is integrated on
+        # its own, so num_cameras stays 1 (verified: two poses fused through
+        # separate integrate() calls land in one map exactly where predicted).
+        h = max(c["height"] for c in CAMERAS.values())
+        w = max(c["width"] for c in CAMERAS.values())
         self.mapper = Mapper(
             MapperCfg(
                 voxel_size=MAPPER["voxel_size"],
@@ -74,8 +78,16 @@ class Mapping:
                 image_width=w,
             )
         )
-        # The gripper fills a good part of a wrist camera's view. Without this
-        # the arm maps itself and then refuses to move.
+        # Every camera sees the robot -- the wrist one stares at its own
+        # gripper, the overhead one looks down on the whole arm -- so each needs
+        # self-masking, or the arm maps itself and then refuses to move.
+        #
+        # ONE SEGMENTER PER CAMERA, deliberately. RobotSegmenter builds its
+        # projection rays on the first frame it ever sees and then freezes them
+        # (get_pointcloud_from_depth only calls update_camera_projection while
+        # _projection_rays is None), so a shared instance would silently mask
+        # the second camera using the first one's intrinsics. Per-camera rigs
+        # keep each camera's resolution and FOV independent.
         #
         # Built directly rather than via RobotSegmenter.from_robot_file: that
         # helper cannot pass ops_dtype, and the default (bfloat16) is rejected
@@ -85,15 +97,25 @@ class Mapping:
         # the lens, so a few of its pixels survive the mask, get fused, and then
         # the robot's own start state reads as in-collision -- after which every
         # plan fails. 0.12 clears the arm's immediate surroundings.
-        self.segmenter = RobotSegmenter(
-            kin, distance_threshold=MAPPER["self_mask_margin"],
-            use_cuda_graph=False, ops_dtype=torch.float32,
-        )
-        self.depth_filter = FilterDepth(
-            image_shape=(h, w),
-            depth_minimum_distance=MAPPER["depth_min"],
-            depth_maximum_distance=MAPPER["depth_max"],
-        )
+        self.rigs = {}
+        for cam_name, spec in CAMERAS.items():
+            self.rigs[cam_name] = {
+                "segmenter": RobotSegmenter(
+                    kin, distance_threshold=MAPPER["self_mask_margin"],
+                    use_cuda_graph=False, ops_dtype=torch.float32,
+                ),
+                "filter": FilterDepth(
+                    image_shape=(spec["height"], spec["width"]),
+                    depth_minimum_distance=MAPPER["depth_min"],
+                    depth_maximum_distance=MAPPER["depth_max"],
+                ),
+                # Static cameras carry their pose here; the rest get it by FK
+                # from the joint state that arrives with each frame.
+                "link": spec.get("link"),
+                "pose": (None if "pose" not in spec
+                         else Pose.from_list(list(spec["pose"]))),
+                "frames": 0,
+            }
         # sphere index -> link name, so a self-hit can say WHICH link.
         self.sphere_link = []
         for name in robot_dict["robot_cfg"]["kinematics"]["collision_link_names"]:
@@ -116,12 +138,26 @@ class Mapping:
         self.tall = 0
         self.tall_where = ""
         self.in_cube = 0
+        self.in_cube_z = ""
         self.last_q = None
 
-    def integrate(self, depth: torch.Tensor, K: torch.Tensor, q: torch.Tensor):
-        """Fuse one frame. depth is (H, W) metres, K is 3x3, q is (1, dof)."""
+    def integrate(self, depth: torch.Tensor, K: torch.Tensor, q: torch.Tensor,
+                  cam_name: str):
+        """Fuse one frame from one camera.
+
+        depth is (H, W) metres, K is 3x3, q is (1, dof). Each camera is
+        integrated on its own rather than batched with the others: a fixed
+        camera never moves, so pairing it with the wrist camera would drag it
+        into depth-lag bookkeeping it does not need.
+        """
+        rig = self.rigs[cam_name]
         js = JointState.from_position(q, joint_names=self.kin.joint_names)
-        cam_pose = self.kin.compute_kinematics(js).tool_poses[CAMERA["link"]]
+        # Static cameras carry their pose; the rest are frames in the URDF, so
+        # the pose comes from forward kinematics on the joint state we were
+        # sent. Either way the robot's own spheres come from q, because every
+        # camera here has the arm somewhere in its view.
+        cam_pose = (rig["pose"] if rig["pose"] is not None
+                    else self.kin.compute_kinematics(js).tool_poses[rig["link"]])
 
         # Everything downstream wants a leading camera/batch dimension.
         depth_b = depth.unsqueeze(0)  # (1, H, W)
@@ -132,14 +168,14 @@ class Mapping:
         # so without this the whole point cloud collapses to ~1 mm from the lens,
         # lands inside the robot's own spheres, and 100% of the image is masked
         # away as "robot" -- which is why the map stayed empty.
-        _, masked = self.segmenter.get_robot_mask_from_active_js(
+        _, masked = rig["segmenter"].get_robot_mask_from_active_js(
             CameraObservation(
-                name="wrist_d435i", depth_image=depth_b, intrinsics=k_b,
+                name=cam_name, depth_image=depth_b, intrinsics=k_b,
                 pose=cam_pose, depth_to_meter=1.0,
             ),
             js,
         )
-        filtered, _ = self.depth_filter(masked)
+        filtered, _ = rig["filter"](masked)
 
         # RGB is unused here, but Mapper.integrate dereferences it
         # unconditionally even though the colour grid is nominally optional.
@@ -148,7 +184,7 @@ class Mapping:
         )
         self.mapper.integrate(
             CameraObservation(
-                name="wrist_d435i",
+                name=cam_name,
                 depth_image=filtered,
                 rgb_image=rgb,
                 intrinsics=k_b,
@@ -157,6 +193,7 @@ class Mapping:
             )
         )
         self.last_q = q
+        rig["frames"] += 1
         self.frames += 1
 
     def _count_self_hits(self, voxels) -> int:
@@ -216,11 +253,20 @@ class Mapping:
         # The decisive number: occupied voxels inside the cube's own bounding
         # box. "The map has tall stuff" is not the same as "the map has THE
         # CUBE", and conflating the two cost a lot of debugging.
+        # ...and how high they reach. This is the number that separates "the
+        # camera can see this obstacle" from "the camera can see the BOTTOM of
+        # this obstacle": a wrist camera never sees above its own altitude, so
+        # its in-cube voxels stop around 0.40 m no matter how tall the obstacle
+        # actually is.
         self.in_cube = 0
+        self.in_cube_z = ""
         if voxels.centers is not None and len(voxels.centers):
             c = voxels.centers.float()
-            self.in_cube = int(
-                ((c >= self.cube_lo) & (c <= self.cube_hi)).all(dim=1).sum().item())
+            inside = ((c >= self.cube_lo) & (c <= self.cube_hi)).all(dim=1)
+            self.in_cube = int(inside.sum().item())
+            if self.in_cube:
+                z = c[inside][:, 2]
+                self.in_cube_z = f" z{z.min():.2f}..{z.max():.2f}"
 
         # Broader and weaker: anything standing well above the table. The cell
         # is otherwise flat, so this catches tall geometry the cube's nominal
@@ -322,9 +368,13 @@ def main():
     mapping = None
     if not args.no_mapping:
         mapping = Mapping(robot_dict, kin)
+        cams = ", ".join(
+            f"{n} ({'fixed' if CAMERAS[n].get('pose') else CAMERAS[n]['link']})"
+            for n in mapping.rigs)
         print(f"[planner] mapper ready. {MAPPER['voxel_size'] * 100:.1f} cm TSDF / "
               f"{MAPPER['esdf_voxel_size'] * 100:.0f} cm ESDF, "
               f"{mapping.mapper.memory_usage_mb():.0f} MB", flush=True)
+        print(f"[planner] cameras: {cams}", flush=True)
 
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -364,14 +414,26 @@ def main():
                     ).reshape(h, w).cuda()
                     K = torch.tensor(header["K"], device="cuda", dtype=torch.float32)
                     q = torch.tensor([header["q"]], device="cuda", dtype=torch.float32)
-                    mapping.integrate(depth, K, q)
+                    cam_name = header.get("cam")
+                    if cam_name not in mapping.rigs:
+                        # Refuse rather than guess. Silently defaulting to the
+                        # wrist camera would self-mask a fixed camera's frame
+                        # with the wrong pose and quietly poison the map.
+                        print(f"[planner] dropping frame from unknown camera "
+                              f"{cam_name!r}", flush=True)
+                        continue
+                    mapping.integrate(depth, K, q, cam_name)
                     refreshed = mapping.frames % MAPPER["esdf_every_n_frames"] == 0
                     if refreshed:
                         mapping.refresh_esdf(planner)
-                        print(f"[planner] map: {mapping.frames} frames fused, "
+                        per_cam = " ".join(f"{n}:{r['frames']}"
+                                           for n, r in mapping.rigs.items())
+                        print(f"[planner] map: {mapping.frames} frames fused "
+                              f"({per_cam}), "
                               f"ESDF {mapping.last_esdf_ms:.1f} ms, "
-                              f"{mapping.occupied} voxels, {mapping.in_cube} INSIDE-CUBE, "
-                              f"{mapping.tall} tall, "
+                              f"{mapping.occupied} voxels, "
+                              f"{mapping.in_cube} INSIDE-CUBE{mapping.in_cube_z}, "
+                              f"{mapping.tall} tall [{mapping.tall_where}], "
                               f"{mapping.self_hits} on the robot"
                               + ("" if mapping.occupied else " (map empty - "
                                  "planner using static scene only)"), flush=True)

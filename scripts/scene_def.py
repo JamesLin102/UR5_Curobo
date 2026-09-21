@@ -101,15 +101,63 @@ SCAN_POSES = [
     [ 0.00, -2.20,  1.90, -1.383, -1.57, 0.0],
 ]
 
-# Wrist RealSense D435i, as rendered in Isaac Sim.
-CAMERA = {
-    "width": 640,
-    "height": 480,
-    "horizontal_fov_deg": 69.0,   # D435i depth FOV at 4:3
-    "near": 0.15,
-    "far": 3.0,
-    "link": "camera_link",        # optical frame defined in the URDF
+# Cameras feeding the map, by name. Each says how its pose is obtained, and
+# exactly one of the two keys must be present:
+#
+#   "link"  a frame in the robot's own URDF. The planner server derives the
+#           pose by forward kinematics from the joint state it is sent, so
+#           nothing has to ship camera poses over the socket.
+#   "pose"  fixed in the world, [x, y, z, qw, qx, qy, qz]. This is the OPTICAL
+#           frame, not the camera body -- see the axis note on "overhead".
+#
+# All of them are cuRobo OPTICAL frames: +Z forward along the view, +X image
+# right, +Y image down. Isaac Sim's Camera wrapper wants ROS BODY axes instead
+# (+X view, +Y left, +Z up), so the demo converts and then verifies the result
+# against the prim's actual transform rather than trusting the quaternion.
+CAMERAS = {
+    # Wrist RealSense D435i, as rendered in Isaac Sim.
+    "wrist": {
+        "width": 640,
+        "height": 480,
+        "horizontal_fov_deg": 69.0,   # D435i depth FOV at 4:3
+        "near": 0.15,
+        "far": 3.0,
+        "link": "camera_link",        # optical frame defined in the URDF
+    },
+    # Fixed camera on a gantry above the cell, looking straight down.
+    #
+    # A wrist camera fundamentally cannot support cross-cell avoidance: its
+    # coverage is whatever the arm happens to sweep, it never sees above its
+    # own altitude, and the measured table footprint over a full cycle is only
+    # x 0.30..0.45, y -0.45..+0.30. This one sees the whole cell at once, so
+    # obstacle height and placement stop having to be chosen to suit it.
+    #
+    # Orientation, derived rather than guessed. Looking straight down means the
+    # optical +Z (view) is world -Z. Picking image-right (+X) = world +Y then
+    # forces image-down (+Y) = world +X, which is right-handed:
+    #     X x Y = (0,1,0) x (1,0,0) = (0,0,-1) = Z  ok
+    # That basis is a 180 degree rotation about (1,1,0)/sqrt(2), i.e.
+    # (w,x,y,z) = (0, sqrt(2)/2, sqrt(2)/2, 0). So image rows run along world
+    # +X (away from the robot base) and columns along world +Y.
+    #
+    # Height 1.20 m gives a footprint at table level of
+    #     along y: 2 * 1.20 * tan(34.5 deg) = 1.65 m  ->  y -0.82..+0.82
+    #     along x: 2 * 1.20 * tan(27.3 deg) = 1.24 m  ->  x -0.27..+0.97
+    # which covers the cell and still lands inside the MAPPER grid below
+    # (x -0.55..1.25, y -0.90..0.90). The camera itself sits above the grid's
+    # z ceiling of 1.05, which is fine -- it looks in from outside.
+    "overhead": {
+        "width": 640,
+        "height": 480,
+        "horizontal_fov_deg": 69.0,
+        "near": 0.15,
+        "far": 3.0,
+        "pose": [0.35, 0.0, 1.20, 0.0, 0.70710678, 0.70710678, 0.0],
+    },
 }
+
+# The wrist camera's URDF frame, still needed on its own in a couple of places.
+CAMERA = CAMERAS["wrist"]
 
 # Volumetric map covering the cell in front of the robot.
 MAPPER = {
@@ -128,11 +176,15 @@ MAPPER = {
     # Decay for voxels the camera is looking THROUGH -- the honest "I can see
     # that spot and it is empty now" signal, and the only thing that clears an
     # object's old position after it moves.
-    # 1.0 disables that too, so the map currently only ever grows. That is fine
-    # for the parked-cube A/B test, but a dragged or swept cube leaves its old
-    # position occupied forever. 0.97 was the last value that cleared without
-    # over-eroding; 0.85 wiped surfaces faster than they could be re-observed.
-    "frustum_decay_factor": 1.0,
+    #
+    # This MUST be < 1.0. At 1.0 the map only ever grows, and a full run
+    # measured the consequence: 75 412 voxels still climbing linearly (a
+    # healthy map is 9000-12000), and self-mask artifacts that accumulate
+    # until one sticks inside the arm permanently -- after which every plan
+    # fails forever. Two cameras reach that point about twice as fast as one.
+    # 0.85 was too aggressive: it wiped surfaces faster than they could be
+    # re-observed.
+    "frustum_decay_factor": 0.97,
     # How far from the robot's collision spheres a depth pixel must be to count
     # as scene rather than robot. A wrist camera looks straight at its own
     # gripper, so this needs to be generous.
