@@ -1,16 +1,24 @@
-# Handover — UR5e + cuRobo 0.8 + Isaac Sim
+# Handover — UR5 + cuRobo 0.8 + Isaac Sim
 
-Written 2026-09-21. Everything below was measured on this machine, not taken
-from documentation. Where a number appears, it came from a run whose command is
-given so you can reproduce it.
+Written 2026-09-21, extended 2026-09-22 when the robot changed. Everything
+below was measured on this machine, not taken from documentation. Where a
+number appears, it came from a run whose command is given so you can reproduce
+it.
+
+**The robot changed on 2026-09-22.** It was a UR5e with a hand-assembled wrist
+stack; it is now a UR5 (CB3) with a vendored one. Sections written before that
+still say "UR5e" where the reasoning is about the arm in general; §11 is the
+conversion and everything it broke, and is the place to start if something in
+an older section does not match what you see.
 
 ---
 
 ## 1. What this is
 
-A UR5e (optionally with a Robotiq 2F-85 gripper and a wrist-mounted RealSense
-D435i) driven by **cuRobo 0.8.0** inside **Isaac Sim 5.1**, with live volumetric
-mapping feeding obstacle data back to the motion planner.
+A UR5 (CB3) carrying a Robotiq FT 300, a Robotiq Wrist Camera, a 2F-85 gripper
+and a wrist-mounted RealSense D435i, driven by **cuRobo 0.8.0** inside **Isaac
+Sim 5.1**, with live volumetric mapping feeding obstacle data back to the
+motion planner. A bare UR5e (`--robot ur5e`) is kept as the no-gripper option.
 
 Environment: `conda activate curobo_isaaclab`
 (nvidia-curobo 0.8.0.post1.dev42, torch 2.7.0+cu128, Isaac Sim 5.1.0.0, RTX 5080)
@@ -61,12 +69,12 @@ Two terminals. The server must be listening before the sim starts.
 
 ```bash
 /home/eencku/anaconda3/envs/curobo_isaaclab/bin/python \
-  /media/eencku/2TBDATA/yusian-ubuntu/UR5_curobo/scripts/planner_server.py --robot ur5e_2f85
+  /media/eencku/2TBDATA/yusian-ubuntu/UR5_curobo/scripts/planner_server.py --robot ur5_robotiq
 ```
 
 ```bash
 DISPLAY=:1 /home/eencku/anaconda3/envs/curobo_isaaclab/bin/python \
-  /media/eencku/2TBDATA/yusian-ubuntu/UR5_curobo/scripts/isaacsim_ur5e_demo.py --robot ur5e_2f85
+  /media/eencku/2TBDATA/yusian-ubuntu/UR5_curobo/scripts/isaacsim_ur5e_demo.py --robot ur5_robotiq
 ```
 
 Useful flags: `--scene NAME` (**both sides, must match**), `--no-mapping` (both
@@ -78,7 +86,7 @@ along its scene motion), `--no-cuda-graph` (server).
 The server names its cameras at startup, so a mismatch is visible immediately:
 
 ```
-[planner] warp 1.15.0  robot ur5e_2f85  scene demo_cube
+[planner] warp 1.15.0  robot ur5_robotiq  scene demo_cube
 [planner] cameras: wrist (camera_link), overhead (fixed)
 ```
 
@@ -129,10 +137,12 @@ cost me a debugging cycle. Kill with `fuser -k 5599/tcp`.
    box imports fine, renaming it imports fine, converting it to `.obj` does
    **not** — the format was never the problem.
 
-6. Isaac Sim side, not cuRobo: **its COLLADA importer segfaults** on the Robotiq
-   2F-85 `.dae` meshes (`libomniverse_asset_converter` → `tinyxml2`, exit 139,
-   no Python traceback). trimesh reads the same files fine, so
-   `tools/convert_2f85_meshes.py` re-exports them as `.obj`.
+6. Isaac Sim side, not cuRobo: **its COLLADA importer segfaulted** on the
+   Robotiq 2F-85 `.dae` meshes from cuRobo's Kinova description
+   (`libomniverse_asset_converter` → `tinyxml2`, exit 139, no Python
+   traceback), and a converter re-exported them as `.obj`. Both are gone with
+   the old model: the vendored `robotiq_description` `.dae` meshes import
+   without complaint.
 
 ---
 
@@ -190,15 +200,18 @@ curl -sL -o out.dae "https://github.com/NVlabs/curobo/raw/v0.7.7/src/curobo/cont
 
 ### Regenerating the model
 
+**Superseded on 2026-09-22.** The splice-it-yourself pipeline described here is
+gone, along with the models it produced; see §11. What replaces it:
+
 ```bash
-python tools/build_ur5e_2f85_urdf.py      # splice arm + 2F-85 + wrist camera
-python tools/clip_joint_limits.py assets/robot/ur_description/ur5e_robotiq_2f_85.urdf --deg 180
-python tools/build_ur5e_2f85_config.py    # collision spheres + cuRobo yml
-python tools/check_robot_cfg.py ur5e_robotiq_2f_85 ur5e_robotiq_2f_85.urdf
+python tools/build_ur5_robotiq_urdf.py     # xacro output -> the project URDF
+python tools/build_ur5_robotiq_config.py   # collision spheres -> cuRobo yml
+python tools/check_robot_cfg.py ur5_robotiq ur5_robotiq.urdf
 ```
 
-Order matters: the config builder reads the URDF. `.orig` backups of both URDFs
-sit beside them.
+Order still matters: the config builder reads the URDF. The joint-limit clip is
+now folded into the URDF builder rather than being a separate step run by hand,
+because being a separate step is how it got lost during the conversion.
 
 ### Joint limits are deliberately clipped to ±180°
 
@@ -271,6 +284,11 @@ Three things that bite:
   the limit it returns to +0.001..+0.017 rad every cycle.
 
 ### The 4-bar is closed in USD, not in the URDF
+
+*(Still true, and still how it works. The link names below are the old model's
+-- `inner_finger` is now `finger_tip_link` -- and the anchors are now derived
+from the URDF's joint origins rather than from mesh surfaces. The pin alone
+also turned out not to be enough on the new model: see §11 fault 9.)*
 
 URDF is a tree, so the loop that makes a 4-bar a 4-bar cannot be written in
 one: the inner knuckle hangs off the base as its own branch with nothing tying
@@ -591,15 +609,18 @@ scripts/
                             each fixed one from its optical pose and checks it.
   proto.py                  length-prefixed framing (depth frames are 1.2 MB)
 
-tools/  -- one-time model generation (rerun only if the robot changes):
-  build_ur5e_2f85_urdf.py   splice UR5e + 2F-85 + wrist camera
-  build_ur5e_2f85_config.py collision spheres + cuRobo yml
-  clip_joint_limits.py      ±360° -> ±180°, keeps .orig backups
-  convert_2f85_meshes.py    .dae -> .obj (Isaac Sim's COLLADA importer crashes)
-  convert_v1_robot_yaml.py  cuRobo v1 -> v2 robot yaml schema
+tools/  -- model generation (rerun only if the robot changes):
+  build_ur5_robotiq_urdf.py    xacro output -> the project URDF, mechanical
+                               edits only, each one printed
+  build_ur5_robotiq_config.py  collision spheres -> cuRobo yml, every link
+                               scored and the build FAILS below its bar
+  clip_joint_limits.py         +/-360 -> +/-180, keeps .orig backups. Folded
+                               into the URDF builder; kept for other URDFs
+  convert_v1_robot_yaml.py     cuRobo v1 -> v2 robot yaml schema
 
 tools/  -- checks and harnesses (rerun whenever you change something):
   check_robot_cfg.py        smoke test: FK -> planner build -> plan_pose
+  show_collision_spheres.py robot + spheres in a browser, seconds not minutes
   ab_solution_spread.py     headless: failure rate + joint wander, --scene aware
   bench_mapper.py           mapper integrate/ESDF timing, synthetic input
 ```
@@ -630,7 +651,9 @@ Git repo since the baseline commit. The overhead camera went in on the
 
 ## 10. Measured reference numbers
 
-Useful as regression baselines.
+Useful as regression baselines. **Everything in this table was measured on the
+UR5e model**, before the 2026-09-22 conversion; §11 has the UR5's numbers where
+they have been re-measured, and says which have not.
 
 | | |
 |---|---|
@@ -650,3 +673,168 @@ Useful as regression baselines.
 
 First call of anything Warp-backed includes JIT compilation — ESDF's first call
 is ~450 ms, then 1 ms. Do not benchmark cold.
+
+---
+
+## 11. The UR5 conversion (2026-09-22), and the nine faults it exposed
+
+The hardware is a UR5 (CB3), not a UR5e. The model in the repo was a UR5e with
+a wrist stack assembled here link by link from photographs and datasheets, and
+it was wrong in ways nobody could see by looking.
+
+It was replaced wholesale by [eugene900805/mir_ur5_humble] with the MiR100
+chassis removed and nothing else changed:
+`assets/robot/ur5_robotiq/ur5_robotiq.urdf.xacro` re-parents the arm to the
+origin and instantiates the same `ur_robot` / `robotiq_wrist_stack` /
+`robotiq_gripper` / `sensor_d435i` macros with the mounting transforms copied
+from `mir_100_v1.urdf.xacro`. `PROVENANCE.md` beside it has the layout and the
+licences.
+
+Nine things then had to be fixed before the demo ran again. Every one was
+measured first; the two that were *guessed* at first (the 4-bar pin, the
+waypoint count) were both wrong.
+
+### The model itself
+
+**1. UR5 vs UR5e geometry.** The CB3 shoulder sits at z = 89 mm, the e-Series
+one at 162.5. Link meshes differ by up to 28 mm (wrist_1). Nothing about the
+e-Series model transfers except the *style* of its collision spheres.
+
+**2. The FT 300 coupling was mounted back to front** — upstream, and in
+ROS-Industrial's own FT 300 macro. Measured off the STL, the part is stepped:
+
+```
+z  0.0 -  4.0   dia 31.5   locating spigot
+z  4.0 -  6.5   dia 75     collar, the FT 300's own diameter
+z  7.0 - 13.0   dia 63     body, the UR flange's own diameter
+```
+
+so dia 63 is the robot face and the spigot locates the SENSOR. Drawn as
+shipped it overhangs the wrist by 6 mm and buries itself 6.3 mm inside the
+sensor. Turned around, the diameters match at both ends and the stack-up
+closes: body 0..6.5, sensor mesh starts at 6.7. Only the drawn geometry moved;
+the 41.5 mm FT 300 offset is ROS-Industrial's figure and was not touched.
+
+**3. Collision spheres.** cuRobo's tuned ur5e spheres cannot be reused, but its
+approach can: few big spheres that protrude, 27 for the whole arm, none on the
+base. Every link now has a stated budget, is fitted best-of-eight, and is
+scored with cuRobo's own coverage metric; below its bar the build fails. One
+unguarded run had put a single 5 mm sphere on wrist_3, covering 0.4% of it.
+
+Two links clamp their spheres to their own geometry, `shoulder_link` and
+`upper_arm_link` — see fault 6.
+
+### Isaac Sim
+
+**4. wrist_1 would not hold still**: 770 mrad of drift at HOME while every
+other joint stayed inside 5 mrad, and it read as a loose joint on screen. This
+description has 26 links that are pure coordinate frames with no mass and no
+geometry, and the importer gives each "a small isotropic inertia"; twenty of
+those hanging off the wrist wreck the articulation solver. `merge_fixed_joints`
+drops it to 4.4 mrad. The 4-bar pin was the first suspicion and was ruled out
+by measurement: 663 mrad with it removed.
+
+Merging discards the merged frames' prims, so `camera_link` no longer exists to
+hang the D435i on. `frame_prim()` walks the URDF to the nearest link that does
+have a prim and puts an Xform back, which costs PhysX nothing.
+
+**5. Every plan failed**, because eight `base_link_inertia` spheres sit inside
+the table cuboid for every configuration — 17.1 mm of penetration, at HOME and
+at both goals. NVIDIA leaves the base bare and that is not an oversight.
+
+**6. The goals were then refused by the MAPPED table rather than the real one.**
+The planner is told the table exactly; the cameras fusing it too only make a
+fatter copy, and on a CB3 the upper arm's spheres live permanently inside that
+copy. `mapper["floor_z"]` drops depth below a height before fusion. The map
+goes from 16 000 voxels to the 300 that are the obstacle.
+
+**7. With that fixed, plans succeeded at 440 ms** — because the demo had been
+run with `--no-cuda-graph` to get that far. With graphs on, everything failed
+from the first call. Building the approach IK from the planner's own
+`ik_solver_config` corrupts the planner:
+
+```
+second solver from the shared config : plan FAIL, FAIL, FAIL
+second solver from a deep copy       : plan ok,   ok,   ok
+no second solver at all              : plan ok,   ok,   ok
+```
+
+Reproduced on cuRobo's shipped ur5e config as well, so it is not this robot. A
+`copy.deepcopy` fixes it, the two solvers still behave differently — a pose
+buried in the table is refused by the collision-aware one and solved by the
+free one — and plans are back to 50 ms. **This is an upstream trap and belongs
+with the ones in §4.**
+
+### The gripper
+
+**8. It never closed on the block.** `grasp_frame` is the middle of the pad
+face WITH THE GRIPPER OPEN, and the 2F-85's fingers swing rather than
+translate, so closing carries the pads 13.5 mm further out: the pad face goes
+from tool0 166.3..204.3 to 179.8..217.8. Aimed at the block's centre they
+therefore ARRIVE 13.5 mm low, into a pedestal 140 mm across where the gripper
+only opens to 85. They stalled against it at 0.04 rad of the 0.8 commanded.
+`pick_place` now aims from the constraint that matters: the closed pads clear
+the pedestal by 12 mm and still overlap the block by 33.
+
+**9. The linkage came apart, and vertical moves juddered — one fault.**
+Isaac Sim 5.x **ignores** the importer's `default_drive_strength` and
+`default_position_drive_damping`. Every joint arrives at stiffness 625 and
+damping **0**, whatever is asked for; verified by reading the `DriveAPI` back
+after import at 1e6 and at 1e5 with identical results. An undamped position
+drive rings around a moving target.
+
+Measured over one 12.5 cm descent, as velocity sign flips across the six arm
+joints and the velocity ripple on wrist_1:
+
+```
+damping    0 -> 138 flips, ripple 0.48, lag  8 mrad
+          20 ->  19 flips, ripple 0.13, lag  9 mrad
+          50 ->   0 flips, ripple 0.19, lag 22 mrad
+         150 ->   0 flips, ripple 0.20, lag 66 mrad
+```
+
+20 is the knee. It also fixed the grasp, which did not look like the same
+fault: the two sides used to close to 0.34 and 0.48 rad — a block shoved off
+centre by the buzzing, not by anything in the gripper. They now agree to 0.01,
+the three joints within a side to 0.011, and the close settles in 35 steps
+instead of 240.
+
+The gripper's own drives are separately softened to 100/10, and the two joints
+the 4-bar pin owns have their drives zeroed entirely. Measured as the spread
+across the six joints while gripping a 45 mm block:
+
+```
+1e6 -> 0.201     1e4 -> 0.191     1e2 -> 0.064
+1e5 -> 0.197     1e3 -> 0.099
+```
+
+Solver iterations (64, 255) moved this by 0.000; driving two joints instead of
+four by 0.005. Removing the pin moved it to 0.992 — the inner knuckle left
+behind at zero while everything else closes. The pin is load-bearing.
+
+### What the measurements cost
+
+Two harnesses were written and one of them was useless. A free-air rig that
+closed the gripper on nothing scored **every** configuration at 0.003 and could
+not see fault 9 at all; only a rig that parked a block between the pads
+reproduced it. Neither is committed — they are scratch — but the lesson is
+worth keeping: a gripper harness that does not grip anything measures nothing.
+
+### Where it stands
+
+All three scenes run on the UR5.
+
+```
+demo_cube   81 waypoints, 51 ms a plan, 683 voxels of obstacle
+pick_place  grasp settles in 35 steps, block lands on [0.450, +/-0.250]
+baseline    28 plans, 0 failures, 0 voxels (the table is out of the map)
+```
+
+Known and not fixed: the gripper rests at 0.028 rad rather than 0, so the real
+gripper opens ~3 mm narrower than the planner's locked-open model (safe
+direction); `settle_gripper` reports `TIMED OUT` on a grasp that is holding
+perfectly well, because its idea of "stopped" is stricter than it needs to be;
+and the 81-vs-121-waypoint A/B in the README was measured on the UR5e and has
+not been repeated.
+
+[eugene900805/mir_ur5_humble]: https://github.com/eugene900805/mir_ur5_humble

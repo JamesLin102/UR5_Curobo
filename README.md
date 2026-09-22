@@ -1,8 +1,16 @@
 # UR5_curobo — camera-driven obstacle avoidance
 
-A UR5e with a Robotiq 2F-85 and two depth cameras, planning with **cuRobo 0.8**
-inside **Isaac Sim 5.1**. Depth is fused into a live TSDF/ESDF and handed back
-to the motion planner every few frames.
+A UR5 (CB3) carrying a Robotiq FT 300, a Robotiq Wrist Camera, a 2F-85 gripper
+and a RealSense D435i, planning with **cuRobo 0.8** inside **Isaac Sim 5.1**.
+Depth is fused into a live TSDF/ESDF and handed back to the motion planner
+every few frames.
+
+The robot description is **vendored, not assembled here**: it is
+[eugene900805/mir_ur5_humble](https://github.com/eugene900805/mir_ur5_humble)
+with the MiR100 chassis removed and nothing else changed. The model it replaced
+was built link by link from photographs and datasheets, and its geometry was
+wrong in ways nobody could see. See
+[assets/robot/ur5_robotiq/PROVENANCE.md](assets/robot/ur5_robotiq/PROVENANCE.md).
 
 The point of the demo is what the planner is *not* told. The obstacle between
 the two targets exists only in the simulator; the planner's world contains a
@@ -18,6 +26,10 @@ Confirmed three ways, including forward kinematics over the no-map trajectory
 showing the arm's own collision spheres passing 10 mm inside the obstacle that
 cuRobo considered collision-free. [HANDOVER.md](HANDOVER.md) §7–8 has the
 numbers.
+
+Those two numbers were measured on the **UR5e** model, before the swap. The UR5
+runs all three scenes — the per-scene numbers below are its — but that
+particular A/B has not been repeated on it.
 
 ---
 
@@ -43,11 +55,11 @@ the version matrix and what breaks.
 Two terminals. The server must be listening before the sim starts.
 
 ```bash
-python scripts/planner_server.py --robot ur5e_2f85 --scene demo_cube
+python scripts/planner_server.py --robot ur5_robotiq --scene demo_cube
 ```
 
 ```bash
-DISPLAY=:1 python scripts/isaacsim_ur5e_demo.py --robot ur5e_2f85 --scene demo_cube
+DISPLAY=:1 python scripts/isaacsim_ur5e_demo.py --robot ur5_robotiq --scene demo_cube
 ```
 
 Both sides need the **same `--scene`**. They never exchange geometry, so the
@@ -66,7 +78,7 @@ ss -ltnp | grep 5599
 | flag | side | what it does |
 |---|---|---|
 | `--scene NAME` | both | which scene to load; must match |
-| `--robot NAME` | both | `ur5e_2f85` (has the cameras) or `ur5e` (arm only) |
+| `--robot NAME` | both | `ur5_robotiq` (default, has the cameras) or `ur5e` (bare arm) |
 | `--no-mapping` | both | plan against the static world only — the A/B baseline |
 | `--no-overhead` | demo | wrist camera alone, for A/B against the fixed one |
 | `--static` | demo | hold at HOME and just look through the cameras |
@@ -75,23 +87,28 @@ ss -ltnp | grep 5599
 | `--depth-lag N` | demo | pair depth with the pose N steps back (default 2) |
 | `--no-cuda-graph` | server | build the planner without CUDA graphs |
 
-The mapping scenes need `--robot ur5e_2f85`: `camera_link` is defined in that
-URDF, and plain `ur5e` has no camera to map with.
+The mapping scenes need `--robot ur5_robotiq`: `camera_link` is defined in that
+URDF, and the bare `ur5e` has no camera to map with.
 
 ---
 
 ## Scenes
 
-| scene | what it is |
-|---|---|
-| `demo_cube` | the shipped demo — one slab the cameras have to discover |
-| `baseline` | the same cell with nothing to discover — the control run |
+| scene | what it is | measured on the UR5 |
+|---|---|---|
+| `demo_cube` | the shipped demo — one slab the cameras have to discover | 81 waypoints, 51 ms a plan, 683 voxels of obstacle |
+| `pick_place` | a block shuttled between two pedestals, past that slab | grasp settles in 35 steps, block lands on ±0.250 |
+| `baseline` | the same cell with nothing to discover — the control run | 28 plans, 0 failures, **0 voxels** |
 
-`baseline` is not an empty world. The table, both cameras and ~18 000 voxels of
-mapped table surface are all still there; what is missing is the body the
-planner is never told about. Run it when plans start failing and you need to
-know whether the obstacle is responsible. That comparison is what caught the
-target markers being fused into the map as obstacles sitting on the goals.
+`baseline` answers one question: with nothing to discover, is the rig healthy?
+Run it when plans start failing and you need to know whether the obstacle is
+responsible. That comparison is what caught the target markers being fused into
+the map as obstacles sitting on the goals.
+
+Its map is now **empty**, and that is expected rather than a symptom: the table
+is the only thing in that cell and `mapper["floor_z"]` keeps it out of the map.
+Which also means baseline no longer exercises perception at all — for that, run
+`demo_cube` and watch the voxel count.
 
 ### Adding one
 
@@ -105,13 +122,26 @@ SCENE = SceneSpec(
     home=[...],        # joint rest pose (rad)
     scan_poses=[...],  # swept once at startup to seed the map
     cameras={...},     # each needs "link" (FK) or "pose" (fixed in world)
-    mapper={...},      # TSDF/ESDF settings
+    mapper={...},      # TSDF/ESDF settings, incl. "floor_z" (see below)
     unmapped=[...],    # bodies ONLY the simulator knows — what the cameras
                        # have to discover. This is what the demo is about.
+    payload=[...],     # rigid bodies to be PICKED UP, with a mass
+    pick={...},        # {"descend_m", "lift_m"} for the last few centimetres
     watch=[...],       # volumes to report voxel counts for
     motions={...},     # how an unmapped body moves
 )
 ```
+
+**`mapper["floor_z"]`: do not map what the planner already knows exactly.**
+Depth below that height is dropped before fusion. The table is a cuboid in
+`obstacles`, so mapping it too only produces a second, fatter copy of it — 2.5
+cm ESDF voxels plus the planner's collision activation distance. On a UR5 (CB3)
+that copy is fatal: the shoulder sits at z = 89 mm, 73 mm lower than the
+e-Series arm cuRobo's config was tuned on, and the upper arm's own collision
+spheres end up permanently inside it. Measured before the fix: the
+collision-aware IK refused **both** goals of `demo_cube` and of `baseline`, on
+every attempt, while the map correctly reported nothing inside the robot. The
+real table is still in the static scene and still checked.
 
 Camera poses are cuRobo **optical** frames (+Z along the view, +X right, +Y
 down). The demo derives the ROS body quaternion Isaac Sim wants and then checks
@@ -132,52 +162,79 @@ scripts/
   scenes/base.py            SceneSpec + WatchBox — the contract
   scenes/demo_cube.py       the shipped scene
   scenes/baseline.py        same cell, nothing to discover
+  scenes/pick_place.py      pick a block off one pedestal, place it on the other
   rig.py                    what is NOT the scene: robots, dt, host/port
   planner_server.py         cuRobo 0.8: planning + mapping service
   isaacsim_ur5e_demo.py     Isaac Sim client. Must not import cuRobo.
   proto.py                  length-prefixed framing (depth frames are 1.2 MB)
 
 configs/                    cuRobo v2 robot configs
-assets/robot/               URDFs and meshes
+assets/robot/ur5_robotiq/   the vendored description — see its PROVENANCE.md
+assets/robot/ur_description/  ur5e.urdf and its meshes, for the bare arm
 tools/                      model generation, checks and harnesses
 ```
 
-`tools/` splits in two. **One-time model generation**, rerun only if the robot
-changes — `build_ur5e_2f85_urdf.py`, `build_ur5e_2f85_config.py`,
-`clip_joint_limits.py`, `convert_2f85_meshes.py`, `convert_v1_robot_yaml.py`.
+`tools/` splits in two. **Model generation**, rerun only if the robot changes:
+
+```bash
+python tools/build_ur5_robotiq_urdf.py     # xacro output -> the project URDF
+python tools/build_ur5_robotiq_config.py   # collision spheres -> cuRobo yml
+```
+
+Both do only mechanical, reviewable edits, and both print what they did. The
+config builder scores every link with cuRobo's own coverage metric and **fails
+the build** if any link falls below its bar — one unguarded run had put a
+single 5 mm sphere on wrist_3, covering 0.4% of it.
+
 **Checks and harnesses**, rerun whenever you change something —
-`check_robot_cfg.py` (FK → planner build → plan_pose), `ab_solution_spread.py`
-(failure rate and joint wander, `--scene` aware), `bench_mapper.py`
-(integrate/ESDF timing).
+`check_robot_cfg.py` (FK → planner build → plan_pose), `show_collision_spheres.py`
+(the robot and its spheres in a browser, seconds rather than minutes),
+`ab_solution_spread.py` (failure rate and joint wander, `--scene` aware),
+`bench_mapper.py` (integrate/ESDF timing), `clip_joint_limits.py`,
+`convert_v1_robot_yaml.py`.
 
 ```bash
 python tools/check_robot_cfg.py ur5e
-python tools/check_robot_cfg.py ur5_robotiq ur5_robotiq.urdf
+python tools/show_collision_spheres.py ur5_robotiq
 ```
 
 ---
 
 ## Robot configs
 
-cuRobo 0.8 ships **no UR5e config** — only `ur10e` — and no UR5e URDF, though
-the meshes are still there. `configs/` was converted from the 0.7.7 originals
-with `tools/convert_v1_robot_yaml.py` and verified to plan.
+cuRobo 0.8 ships **no UR5 or UR5e config** — only `ur10e`. `configs/ur5e.yml`
+was converted from the 0.7.7 original with `tools/convert_v1_robot_yaml.py`;
+`configs/ur5_robotiq.yml` is generated from the vendored URDF.
 
 | file | |
 |---|---|
-| `ur5e.yml` | arm only, `tool0` |
-| `ur5_robotiq.yml` | arm + gripper + wrist camera; what the demo uses |
-| `ur5e_robotiq_2f_140.yml` | converted from 0.7.7, not wired into the demo |
+| `ur5_robotiq.yml` | the whole stack, `grasp_frame` + `camera_link`; what the demo uses |
+| `ur5e.yml` | bare UR5e, `tool0`. Kept as the no-gripper option and as the source of the cspace weights |
 
 Point cuRobo at them with `ContentPath(robot_config_absolute_path=...,
 robot_urdf_absolute_path=..., robot_asset_absolute_path=...)` — see
 `tools/check_robot_cfg.py`.
 
-The 2F-85 model is spliced rather than shipped: the arm from `ur5e.urdf`, the
-gripper chain from cuRobo 0.7.7's Kinova description, plus a D435i. Its joints
-are **fixed** — collision geometry for planning, not an actuated mechanism,
-matching cuRobo's own 2F-85 model. Joint limits are deliberately clipped to
-±180°; HANDOVER §6 has the measurement behind that.
+**The UR5e's spheres are not transferable to the UR5.** The CB3 link meshes are
+a different shape — by up to 28 mm on wrist_1 — so cuRobo's hand-tuned ur5e
+spheres would land in the wrong places, silently, since nothing checks that a
+sphere is on its link. What does carry across is its *style*: few big spheres
+that protrude rather than many small ones that follow the surface, 27 for the
+whole arm, one 100 mm ball for the shoulder, and **none at all on the base**.
+
+That last one is not an oversight in NVIDIA's config. The base is bolted to the
+table, so any sphere on it sits inside the table cuboid for every
+configuration — measured at 17.1 mm of penetration — and the planner then calls
+the robot in collision whatever it is asked. Eight base spheres were tried here
+and did exactly that: every plan failed, with no map loaded at all.
+
+Two links have their spheres clamped to their own geometry, `shoulder_link` and
+`upper_arm_link`, because a sphere hanging 14–20 mm below the metal is 14–20 mm
+closer to the table, and on a CB3 there is not 14 mm to spare. The generator
+explains both, with the numbers.
+
+Joint limits are clipped to ±180°, folded into the URDF builder — HANDOVER §6
+has the measurement behind that.
 
 ### v1 -> v2 schema changes applied
 
@@ -196,6 +253,33 @@ inverse-dynamics checkpoint. No UR5e equivalent exists and the checkpoint is
 not in the repo. `load_dynamics` defaults to `False`, so planning works without
 it; the torque-limit-aware part of B-spline trajopt does not apply until such a
 model exists.
+
+---
+
+## Known quirks
+
+Three things that are true of the current build, none of them a blocker, all of
+them expensive to rediscover.
+
+**Isaac Sim 5.1 ignores the URDF importer's drive settings.**
+`default_drive_strength` and `default_position_drive_damping` do nothing: every
+joint arrives at stiffness 625 and **damping 0**, whatever they are set to —
+read the `DriveAPI` back after import at 1e6 and at 1e5 and the values are
+identical. An undamped position drive rings around a moving target, which is
+what made slow vertical moves judder and, less obviously, what shoved the block
+off centre during a grasp. `tune_arm_drives()` and `tune_gripper_drives()` in
+the demo set the gains after import, which is the only place that works.
+
+**The gripper does not return to a true zero.** With the softer drives it rests
+at 0.028 rad rather than 0, so the real gripper opens about 3 mm narrower than
+the planner's locked-open model. That direction is safe — the planner believes
+the gripper is wider than it is — but it is a discrepancy, not a rounding.
+
+**`settle_gripper` occasionally reports `TIMED OUT, still moving`.** Its idea of
+"stopped" is stricter than it needs to be, so a grasp that is holding perfectly
+well sometimes runs out its 240 steps with the joints still creeping by
+microradians. The joint angles it prints are the same as a clean run's, and the
+block travels either way. It is a noisy log line, not a failed grasp.
 
 ---
 
