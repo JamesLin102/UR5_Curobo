@@ -55,10 +55,42 @@ SLAB = ("drag_me", [0.12, 0.35, 0.35], [0.30, 0.0, 0.175, 1, 0, 0, 0],
         (0.62, 0.20, 0.18))
 
 DESCEND = 0.125
-# Tool down, DESCEND above the block's centre, so the descent lands the pads
-# either side of it.
+
+# Where grasp_frame has to end up, which is NOT the block's centre.
+#
+# grasp_frame sits at the middle of the finger pads WITH THE GRIPPER OPEN --
+# 185.3 mm from tool0, measured off left_finger_tip.stl. The 2F-85's fingers
+# swing rather than translate, so closing carries the pads 13.5 mm further
+# out: the pad face goes from tool0 166.3..204.3 to 179.8..217.8. Aim at the
+# block's centre and the pads therefore ARRIVE 13.5 mm low.
+#
+# That was enough to break every grasp. The pedestal is 140 mm across and the
+# gripper only opens to 85, so the pads are inside its footprint the whole
+# way down; aimed at the centre they ended 10 mm BELOW its top face, stalled
+# against it at 0.04 rad of the 0.8 commanded, and shoved the block off
+# instead of lifting it.
+PAD_HALF = 0.019          # half the pad face, 166.3..204.3 mm
+PAD_CLOSE_DROP = 0.0135   # how much further out the pads sit once closed
+# 6 mm was not enough: at that height one finger caught the pedestal on the
+# way in and stalled at 0.011 rad while the other closed to 0.724, so the
+# block was carried pinched against a single pad. The pad face is 38 mm and
+# the block only stands 45 mm proud of the pedestal, so buying clearance means
+# letting the pad top rise past the block -- which is free space, and costs
+# only overlap.
+PAD_CLEARANCE = 0.012
+
+# Lowest the closed pads may reach, plus the margin, is what fixes this.
+GRASP_Z = PEDESTAL_TOP + PAD_HALF + PAD_CLOSE_DROP + PAD_CLEARANCE
+# What actually has to hold is that the closed pads still overlap the block by
+# a useful amount, not that they stay under its top face.
+_pad_lo = GRASP_Z - PAD_CLOSE_DROP - PAD_HALF
+_pad_hi = GRASP_Z - PAD_CLOSE_DROP + PAD_HALF
+_overlap = min(_pad_hi, PEDESTAL_TOP + BLOCK_SIZE) - max(_pad_lo, PEDESTAL_TOP)
+assert _overlap >= 0.025, f"closed pads overlap the block by only {_overlap*1000:.1f} mm"
+
+# Tool down, DESCEND above the grasp height.
 TARGETS = [
-    [x, y, PEDESTAL_TOP + BLOCK_SIZE / 2 + DESCEND, 0.0, 1.0, 0.0, 0.0]
+    [x, y, GRASP_Z + DESCEND, 0.0, 1.0, 0.0, 0.0]
     for x, y in PICK_XY
 ]
 

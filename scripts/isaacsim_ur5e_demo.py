@@ -170,6 +170,37 @@ class Planner:
 # surface-point search, and it stays right if the URDF is regenerated.
 GRIPPER_PIN_AXIS = "Y"      # every 2F-85 joint turns about this link's Y
 
+# The joints the PIN is responsible for rather than the drive. They are not
+# commanded, and they must not be HELD either: the importer gives every joint
+# a position drive at default_drive_strength, so left alone they are pinned to
+# zero at 1e6 stiffness and spend the whole grasp fighting the loop closure.
+# That fight is what makes the linkage visibly come apart.
+#
+# Measured in free air, closing onto nothing, as the spread across the six
+# joints expressed as a fraction of a full close:
+#
+#     pin only, follower drives left alone : 0.805..0.922, spread 0.118
+#     pin, follower drives zeroed          : 0.997..1.000, spread 0.003
+#
+# The second also reaches its commanded angle, which the first never does.
+PINNED_FOLLOWER = "inner_knuckle_joint"
+
+# Drive stiffness for the gripper joints alone.
+#
+# The importer gives EVERY joint default_drive_strength, which is 1e6 because
+# the arm needs it. A 2F-85 link weighs 14 g, and a 1e6 drive on it simply
+# overpowers the 4-bar's loop closure: the links stop agreeing with each other
+# and the linkage visibly comes apart. Measured as the spread across the six
+# joints while gripping a 45 mm block, which is the thing you can see:
+#
+#     1e6 -> 0.201     1e4 -> 0.191     1e2 -> 0.064
+#     1e5 -> 0.197     1e3 -> 0.099
+#
+# Monotonic, and nothing else moved it: solver iterations (64, 255) changed it
+# by 0.000, and driving two joints instead of four by 0.005.
+GRIPPER_DRIVE_STIFFNESS = 1.0e2
+GRIPPER_DRIVE_DAMPING = 1.0e1
+
 
 def _gripper_pin_anchors(urdf_path):
     """Pin anchors, per side, in the inner knuckle's and finger tip's frames.
@@ -298,6 +329,35 @@ def close_gripper_linkage(stage, prim_path):
     return made
 
 
+def tune_gripper_drives(stage, prim_path, joints):
+    """Soften the gripper's drives, and release the ones the pin owns.
+
+    Two separate things, both about the same 1e6 default: the followers must
+    not be held at all, and the rest must not be held hard enough to tear the
+    linkage apart.
+    """
+    freed, softened = [], []
+    for prim in stage.Traverse():
+        name = prim.GetName()
+        if name not in joints:
+            continue
+        drive = UsdPhysics.DriveAPI.Get(prim, "angular")
+        if not drive:
+            continue
+        if PINNED_FOLLOWER in name:
+            drive.CreateStiffnessAttr().Set(0.0)
+            drive.CreateDampingAttr().Set(0.0)
+            freed.append(name)
+        else:
+            drive.CreateStiffnessAttr().Set(GRIPPER_DRIVE_STIFFNESS)
+            drive.CreateDampingAttr().Set(GRIPPER_DRIVE_DAMPING)
+            softened.append(name)
+    print(f"[demo] gripper drives: {len(softened)} at "
+          f"{GRIPPER_DRIVE_STIFFNESS:g}/{GRIPPER_DRIVE_DAMPING:g}, "
+          f"{len(freed)} released to the 4-bar")
+    return freed
+
+
 def build_stage(world):
     """Import the arm from URDF, add obstacles, and hide one from the planner."""
     status, cfg = omni.kit.commands.execute("URDFCreateImportConfig")
@@ -373,6 +433,8 @@ def build_stage(world):
         )
 
     close_gripper_linkage(world.stage, prim_path)
+    tune_gripper_drives(world.stage, prim_path,
+                        set(ROBOTS[ARGS.robot].get("gripper_joints") or {}))
 
     # Payloads. Real rigid bodies, unlike everything above: they fall, they can
     # be squeezed, and they come away when the gripper closes. High friction on
@@ -694,8 +756,14 @@ def main():
     # their finger, so the mechanism sets their angle the way it does on the
     # real gripper. Driving them as well would fight that pin.
     coupling = {j: m for j, m in GRIPPER_COUPLING.items()
-                if j in sim_names and "inner_knuckle" not in j}
+                if j in sim_names and PINNED_FOLLOWER not in j}
     grip_idx_all = np.array([sim_names.index(j) for j in coupling])
+    # Every gripper joint, followers included, for reporting. Signed by its
+    # multiplier so all six read as "fraction closed" and can be compared.
+    all_grip_names = [j for j in GRIPPER_COUPLING if j in sim_names]
+    all_grip_idx = np.array([sim_names.index(j) for j in all_grip_names])
+    all_grip_sign = np.array([GRIPPER_COUPLING[j] for j in all_grip_names],
+                             dtype=np.float32)
     grip_mult = np.array(list(coupling.values()), dtype=np.float32)
 
     grip_open = ROBOTS[ARGS.robot].get("gripper_open", 0.0)
@@ -859,6 +927,39 @@ def main():
             world.step(render=True)
         return True
 
+    def settle_gripper(target, max_steps=240, quiet_steps=12, tol=2.0e-4):
+        """Step until the driven gripper joints stop moving.
+
+        The stroke above is commanded open-loop over a fixed number of steps,
+        which is right in free air and wrong on an object: the fingers stall
+        against it and the joints lag their command -- measured at 0.365 rad
+        while squeezing. Lifting on the ramp's last step therefore lifts
+        before the grip has closed, and the block gets pushed across its
+        pedestal instead of picked up.
+
+        Waiting on the MEASURED joints is not the same as commanding from
+        them. Slaving the followers to the leader's measured angle was tried
+        and is worse (the left/right spread went 0.146 -> 0.297 rad); this
+        only waits.
+
+        Returns (steps waited, whether it went quiet, worst joint error).
+        """
+        if not len(grip_idx_all):
+            return 0, True, 0.0
+        want = grip_mult * target
+        prev = robot.get_joint_positions()[grip_idx_all]
+        quiet = 0
+        for i in range(max_steps):
+            if not simulation_app.is_running():
+                return i, False, float(np.abs(prev - want).max())
+            world.step(render=True)
+            now = robot.get_joint_positions()[grip_idx_all]
+            quiet = quiet + 1 if float(np.abs(now - prev).max()) < tol else 0
+            prev = now
+            if quiet >= quiet_steps:
+                return i + 1, True, float(np.abs(now - want).max())
+        return max_steps, False, float(np.abs(prev - want).max())
+
     def hold_still(n):
         for _ in range(n):
             if not simulation_app.is_running():
@@ -901,7 +1002,19 @@ def main():
                 command_gripper(grip_open + (grip_closed - grip_open) *
                                 ((i + 1) / stroke if grab else 1 - (i + 1) / stroke))
                 world.step(render=True)
-            hold_still(20)
+            # Do not move until the fingers have actually stopped.
+            end = grip_closed if grab else grip_open
+            waited, quiet, err = settle_gripper(end)
+            # Every joint, not just the worst: a linkage that has come apart
+            # and a linkage that has simply stalled on the object look
+            # identical in a single number, and they need opposite fixes.
+            q_all = robot.get_joint_positions()[all_grip_idx]
+            spread = " ".join(f"{n.split('robotiq_85_')[-1][:-6]}={v * m:+.3f}"
+                              for n, v, m in zip(all_grip_names, q_all, all_grip_sign))
+            print(f"[demo]   {'close' if grab else 'open'}: settled after "
+                  f"{waited} steps{'' if quiet else ' (TIMED OUT, still moving)'}"
+                  f", want {end:+.3f} rad")
+            print(f"[demo]     {spread}")
             lifted = list(SCENE.targets[idx])
             lifted[2] += SCENE.pick["lift_m"] - SCENE.pick["descend_m"]
             move_tool_z(lifted, 0.0, 70)
