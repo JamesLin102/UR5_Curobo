@@ -68,7 +68,32 @@ DRAG_CUBE = (
     # being fused into the map as obstacles sitting on the goals (see
     # build_stage, and HANDOVER section 7). Every size measured before that fix
     # was really measuring the markers.
-    "drag_me", [0.12, 0.35, 0.35], [0.30, 0.0, 0.175, 1, 0, 0, 0], (0.62, 0.20, 0.18)
+    # MOVED FOR THE UR5 (2026-09-22). Same size as it always was; what was
+    # wrong was WHERE it stood.
+    #
+    # It diverted the UR5e from x = 0.30 and did nothing at all to the UR5:
+    # the unmapped route cleared it by +46.9 mm at the gripper and +65.5 mm at
+    # the upper arm, and all three rows of the A/B came out at 81 waypoints.
+    # A CB3 shoulder sits at z = 89 mm against the e-Series' 162.5, so the
+    # same two targets are reached in a different posture.
+    #
+    # Making it taller was the obvious move and the wrong one. Counting the
+    # route's own collision spheres by x band says why:
+    #
+    #     x 0.20..0.30:   500 spheres      x 0.42..0.48:  6116
+    #     x 0.30..0.38:  1250              x 0.48..0.55:  4677
+    #     x 0.38..0.42:  1939
+    #
+    # The arm crosses between the targets around x = 0.45, not x = 0.30. From
+    # x = 0.30 it took 0.48 m of height to touch the route at all, and at that
+    # height the corridor it left was 16 mm wide -- the arm diverted, parked
+    # itself against the slab and could not plan out again, sticking
+    # permanently after about 14 cycles.
+    #
+    # At x = 0.42 the ORIGINAL 0.35 m height penetrates the route by 20.2 mm
+    # and leaves the goals 145 mm clear, with all the room above it that the
+    # detour needs, and low enough that both cameras see the whole thing.
+        "drag_me", [0.12, 0.35, 0.35], [0.42, 0.0, 0.175, 1, 0, 0, 0], (0.62, 0.20, 0.18)
 )
 
 # The cube slides along y on its own, so the test does not depend on dragging it
@@ -185,7 +210,7 @@ MAPPER = {
     # How far from the robot's collision spheres a depth pixel must be to count
     # as scene rather than robot. A wrist camera looks straight at its own
     # gripper, so this needs to be generous.
-    "self_mask_margin": 0.12,
+    "self_mask_margin": 0.18,
     "esdf_every_n_frames": 10,      # recompute the distance field this often
     "minimum_tsdf_weight": 0.01,
     # Do not fuse anything at or below this height. The table lives in

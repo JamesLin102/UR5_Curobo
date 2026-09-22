@@ -48,17 +48,31 @@ ARM_JOINTS = ["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
 #
 # The automatic count, for comparison, was 87 over the same six links.
 #
-# The base gets NO spheres, following ur5e.yml. This is not an oversight in
-# NVIDIA's config, it is the only workable choice: the base is bolted to the
-# table, so any sphere on it sits inside the table cuboid for every
-# configuration -- measured at 17.1 mm of penetration, at HOME and at both
-# targets alike -- and the planner then reports the robot as in collision no
-# matter what it is asked. Eight base spheres were tried here and did exactly
-# that: every plan failed, with no map loaded at all. Nothing the planner can
-# do moves the base, so there is nothing to check.
-NO_SPHERES = ["base_link_inertia"]
+# The base DOES get spheres, and the planner must not see them.
+#
+# Both halves of that matter. Any sphere on the base sits inside the table
+# cuboid for every configuration -- measured at 17.1 mm of penetration -- so a
+# planner that checks them calls the robot in collision whatever it is asked;
+# eight base spheres were tried and every plan failed with no map loaded at
+# all. cuRobo's own ur5e.yml leaves the base bare for this reason.
+#
+# But the spheres are also what RobotSegmenter masks the cameras with, and a
+# base with no spheres is a base the cameras MAP. Measured after removing
+# them: 13 700 of the map's 14 000 voxels sat between z = 0.02 and 0.15, which
+# is exactly the base (0..0.024) and the shoulder (0.024..0.157) -- a
+# permanent blob of the robot's own body, in the space its shoulder and
+# forearm have to pass through, and it took the demo from 0 failures to 74.
+#
+# The self-hit check could not see it either: it counts occupied voxels inside
+# the robot's spheres, and the one link without spheres is invisible to it. It
+# reported "0 on the robot" throughout.
+#
+# So they live here, and planner_server drops them from the PLANNER's copy of
+# the config only. See build() there.
+SEGMENTER_ONLY = ["base_link_inertia"]
 
 ARM_SPHERES = {
+    "base_link_inertia": 8,
     "shoulder_link": 2,
     "upper_arm_link": 8,
     "forearm_link": 9,
@@ -278,10 +292,6 @@ def main():
     k = built.get("robot_cfg", built)["kinematics"]
 
     # Re-fit the arm to the ur5e budget, and report what every link scored.
-    for name in NO_SPHERES:
-        k["collision_link_names"] = [n for n in k["collision_link_names"] if n != name]
-        k["collision_spheres"].pop(name, None)
-
     urdf_links = {l.get("name"): l for l in ET.parse(URDF).getroot().findall("link")}
     print(f"  {'link':<36s} {'n':>3s} {'r (mm)':>9s} {'cover':>6s} {'protr':>6s} {'gap95':>8s}")
     failed = []

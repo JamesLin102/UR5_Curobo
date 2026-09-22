@@ -44,6 +44,14 @@ from curobo._src.robot.loader.util import load_robot_yaml  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# Links whose collision spheres exist only so RobotSegmenter can mask them out
+# of the depth image. The planner never sees them.
+SEGMENTER_ONLY = ("base_link_inertia",)
+
+# Set once in main(). Used ONLY to report how close a plan came to a body the
+# planner was never told about -- never to plan with.
+SCENE_FOR_REPORT = None
+
 
 def static_scene(scene):
     """The world the planner IS told about: exact cuboids, nothing perceived.
@@ -166,6 +174,7 @@ class Mapping:
         # static scene and still checked. It only stops the duplicate.
         self.map_floor = mapper_cfg.get("floor_z")
         self._pixel_grid = {}
+        self.floor_cut = {}
 
         self.frames = 0
         self.voxel_grid = None
@@ -186,6 +195,7 @@ class Mapping:
         self.watch_report = ""
         self.tall = 0
         self.tall_where = ""
+        self.z_profile = ""
         self.last_q = None
 
     def integrate(self, depth: torch.Tensor, K: torch.Tensor, q: torch.Tensor,
@@ -269,7 +279,10 @@ class Mapping:
         r = pose.get_rotation_matrix().view(3, 3)
         z = x * r[2, 0] + y * r[2, 1] + d * r[2, 2] + pose.position.view(3)[2]
         # depth 0 already means "no reading"; leave those alone.
-        return torch.where((z > self.map_floor) | (d <= 0), d, torch.zeros_like(d))[None]
+        live = d > 0
+        cut = (z <= self.map_floor) & live
+        self.floor_cut[cam_name] = (int(cut.sum().item()), int(live.sum().item()))
+        return torch.where((z > self.map_floor) | (~live), d, torch.zeros_like(d))[None]
 
     def _count_self_hits(self, voxels) -> int:
         """Occupied voxels sitting inside the robot at its last known pose."""
@@ -368,6 +381,29 @@ class Mapping:
                                    f"y{lo[1]:+.2f}..{hi[1]:+.2f} "
                                    f"z{lo[2]:+.2f}..{hi[2]:+.2f}")
 
+        # Where the map actually IS, in z. "N voxels" says nothing about
+        # whether they are the obstacle, the table creeping back in over
+        # floor_z, or the arm mapping itself.
+        if voxels.centers is not None and len(voxels.centers):
+            z = voxels.centers[:, 2]
+            edges = [0.0, 0.05, 0.10, 0.15, 0.25, 0.40, 0.60]
+            bins = []
+            for a, b in zip(edges, edges[1:]):
+                bins.append(int(((z >= a) & (z < b)).sum().item()))
+            bins.append(int((z >= edges[-1]).sum().item()))
+            labels = [f"{a:.2f}" for a in edges] + ["+"]
+            self.z_profile = " z:" + " ".join(
+                f"{lab}:{n}" for lab, n in zip(labels, bins) if n)
+            low = voxels.centers[z < 0.15]
+            if len(low):
+                a = low.min(0).values.cpu().numpy()
+                b = low.max(0).values.cpu().numpy()
+                self.z_profile += (f" low<0.15 spans x{a[0]:+.2f}..{b[0]:+.2f}"
+                                   f" y{a[1]:+.2f}..{b[1]:+.2f}")
+        if self.floor_cut:
+            self.z_profile += " | floor cut " + " ".join(
+                f"{c}:{n}/{t}" for c, (n, t) in self.floor_cut.items())
+
         world = static_scene(self.scene)
         if self.occupied > 0:
             world.voxel = [self.voxel_grid]
@@ -390,6 +426,24 @@ def build(robot_key, scene, use_cuda_graph=True):
     kin = Kinematics(KinematicsCfg.from_content_path(content))
     planner_dict = copy.deepcopy(robot_dict)
     planner_dict["robot_cfg"]["kinematics"]["tool_frames"] = [spec["tool_frame"]]
+    # The base's spheres are for the SEGMENTER, not the planner. `kin` above
+    # keeps them so the cameras can mask the robot's own base out of the
+    # depth; the planner must not check them, because the base is bolted to
+    # the table and they sit 17 mm inside it in every configuration -- with
+    # them, every plan fails, with no map loaded at all.
+    #
+    # Both halves were learned the hard way and in that order, so removing
+    # either one puts the demo back in a state that looks like a different
+    # bug. See tools/build_ur5_robotiq_config.py, SEGMENTER_ONLY.
+    pk = planner_dict["robot_cfg"]["kinematics"]
+    dropped = [n for n in pk["collision_link_names"] if n in SEGMENTER_ONLY]
+    if dropped:
+        pk["collision_link_names"] = [n for n in pk["collision_link_names"]
+                                      if n not in SEGMENTER_ONLY]
+        for n in dropped:
+            pk["collision_spheres"].pop(n, None)
+        print(f"[planner] spheres kept for masking, hidden from the planner: "
+              f"{', '.join(dropped)}", flush=True)
 
     planner = MotionPlanner(
         MotionPlannerCfg.create(
@@ -437,6 +491,33 @@ def build(robot_key, scene, use_cuda_graph=True):
     approach_ik = InverseKinematics(copy.deepcopy(planner.config.ik_solver_config),
                                     None)
     return kin, planner, approach_ik, robot_dict, spec["tool_frame"]
+
+
+def unmapped_clearance(planner, scene, traj_q):
+    """Closest the planned trajectory comes to a body the planner is NOT told about.
+
+    REPORTING ONLY -- nothing here reaches the planner, which is the whole
+    point of the demo. It exists because the waypoint count is a bad proxy for
+    "did it avoid": a detour can come back the same length, and did.
+
+    Negative means the arm would pass through it.
+    """
+    if not scene.unmapped:
+        return ""
+    js = JointState.from_position(traj_q, joint_names=planner.kinematics.joint_names)
+    sph = planner.kinematics.compute_kinematics(js).robot_spheres.reshape(-1, 4)
+    sph = sph[sph[:, 3] > 0]
+    c, r = sph[:, :3], sph[:, 3]
+    out = []
+    for name, dims, pose, _ in scene.unmapped:
+        lo = torch.tensor([p - d / 2 for p, d in zip(pose[:3], dims)],
+                          device=c.device, dtype=c.dtype)
+        hi = torch.tensor([p + d / 2 for p, d in zip(pose[:3], dims)],
+                          device=c.device, dtype=c.dtype)
+        near = torch.max(torch.min(c, hi), lo)
+        d = (c - near).norm(dim=1) - r
+        out.append(f"{name} {float(d.min()) * 1000:+.0f} mm")
+    return ", ".join(out)
 
 
 def handle_plan(planner, kin, tool_frame, header, approach_ik=None):
@@ -488,6 +569,7 @@ def handle_plan(planner, kin, tool_frame, header, approach_ik=None):
         else traj.shape[0]
     n = max(2, min(n, traj.shape[0]))
     out["solve_ms"] = float(res.solve_time * 1e3)
+    out["clearance"] = unmapped_clearance(planner, SCENE_FOR_REPORT, traj[:n])
     out["n"] = n
     out["dof"] = traj.shape[1]
     return out, traj[:n].contiguous().cpu().numpy().astype(np.float32).tobytes()
@@ -533,6 +615,7 @@ def main():
     args = ap.parse_args()
 
     scene = scenes.load(args.scene)
+    globals()['SCENE_FOR_REPORT'] = scene
     print(f"[planner] warp {wp.config.version}  robot {args.robot}  "
           f"scene {args.scene}", flush=True)
     print("[planner] building (first run compiles CUDA kernels)...", flush=True)
@@ -599,8 +682,10 @@ def main():
                 elif op == "plan":
                     out, blob = handle_plan(planner, kin, tool_frame, header, approach_ik)
                     if out["ok"]:
+                        gap = out.get("clearance")
                         print(f"[planner] plan ok: {out['solve_ms']:.0f} ms, "
-                              f"{out['n']} waypoints", flush=True)
+                              f"{out['n']} waypoints"
+                              + (f" | clears {gap}" if gap else ""), flush=True)
                     else:
                         diag = ""
                         if mapping is not None:
@@ -645,7 +730,7 @@ def main():
                               f"ESDF {mapping.last_esdf_ms:.1f} ms, "
                               f"{mapping.occupied} voxels, "
                               f"{mapping.watch_report}"
-                              f"{mapping.tall} tall [{mapping.tall_where}], "
+                              f"{mapping.tall} tall [{mapping.tall_where}]{mapping.z_profile}, "
                               f"{mapping.self_hits} on the robot"
                               + ("" if mapping.occupied else " (map empty - "
                                  "planner using static scene only)"), flush=True)

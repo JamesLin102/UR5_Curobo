@@ -27,7 +27,7 @@ Measured: the gripper stalls at +0.506 rad against the 45 mm block (commanded
 """
 
 from .base import SceneSpec, WatchBox
-from .demo_cube import CAMERAS, HOME, MAPPER, SCAN_POSES
+from .demo_cube import CAMERAS, DRAG_CUBE, HOME, MAPPER, SCAN_POSES
 
 # Raised so the block is well clear of the table and the grasp is unambiguous.
 PEDESTAL_H = 0.10
@@ -48,11 +48,17 @@ BLOCK = ("block", [BLOCK_SIZE] * 3,
          [PICK_XY[0][0], PICK_XY[0][1], PEDESTAL_TOP + BLOCK_SIZE / 2, 1, 0, 0, 0],
          (0.90, 0.70, 0.10), 0.15)
 
-# The same slab demo_cube uses, in the same place: low and wide, entirely
-# inside what the cameras can see, and measured there to divert the route
-# rather than block it. It sits between the two pedestals.
-SLAB = ("drag_me", [0.12, 0.35, 0.35], [0.30, 0.0, 0.175, 1, 0, 0, 0],
-        (0.62, 0.20, 0.18))
+# demo_cube's slab, same size, but NOT in the same place -- and that is not an
+# oversight to be tidied away by importing it whole. demo_cube moved its slab
+# to x = 0.42 because that is where its arm crosses between the targets; this
+# scene has pedestals at x = 0.45, so a slab there sits on top of the grasps.
+# Tried: every goal was refused, with voxels of the slab inside the gripper.
+#
+# Here it stands between the pedestals at x = 0.30, out of the approach. On
+# the UR5 it is not expected to divert the route -- see demo_cube for why the
+# position matters so much -- and this scene is about the grasp, not the
+# detour.
+SLAB = ("drag_me", DRAG_CUBE[1], [0.30, 0.0, 0.175, 1, 0, 0, 0], DRAG_CUBE[3])
 
 DESCEND = 0.125
 
