@@ -117,7 +117,19 @@ cost me a debugging cycle. Kill with `fuser -k 5599/tcp`.
    silently, if the resolutions happen to match. `planner_server.Mapping` keeps
    **one segmenter per camera** for this reason.
 
-5. Isaac Sim side, not cuRobo: **its COLLADA importer segfaults** on the Robotiq
+5. Isaac Sim side, not cuRobo: **its URDF importer does not sanitise mesh
+   FILENAMES into USD prim names.** A hyphen is not legal in a prim name, so
+   `robotiq_ft300-G-062-COUPLING_G-50-4M6-1D6_20181119.STL` produces a null
+   prim and the **entire** import fails with `RuntimeError: Used null prim` —
+   naming no file, so nothing points at the cause. It *does* sanitise link and
+   joint names and says so in the log (`The path base_link-base_link_inertia is
+   not a valid usd path, modifying to ...`), which is exactly what makes the
+   omission easy to miss. The FT 300 coupling plate is therefore stored as
+   `ft300_coupling.STL`. Isolated by bisection: swapping that one mesh for a
+   box imports fine, renaming it imports fine, converting it to `.obj` does
+   **not** — the format was never the problem.
+
+6. Isaac Sim side, not cuRobo: **its COLLADA importer segfaults** on the Robotiq
    2F-85 `.dae` meshes (`libomniverse_asset_converter` → `tinyxml2`, exit 139,
    no Python traceback). trimesh reads the same files fine, so
    `tools/convert_2f85_meshes.py` re-exports them as `.obj`.
@@ -399,7 +411,18 @@ rather than continuing if that check fails.
 
 ### Still open
 
-Nothing blocking. The obstacle is still the 0.35 m low slab chosen when the
+**A self-mask transient at startup, new since the wrist stack went on.** The
+FT 300 and Wrist Camera push the gripper 55 mm further out, which changes what
+the wrist camera sees of its own fingers during the opening scan. Measured over
+one full run: 35 consecutive plans failed with `6 inside the robot
+[left_inner_finger:1]`, then the frustum decay cleared them and the remaining
+89 plans all succeeded on a detour route with `0 on the robot`. It recovers by
+itself — the permanent deadlock is gone — but it did not happen before.
+`self_mask_margin` is 0.12, tuned for the old geometry. Raising it needs its
+own A/B: too generous and real obstacles get erased as they approach the
+gripper.
+
+Otherwise nothing blocking. The obstacle is still the 0.35 m low slab chosen when the
 wrist camera's 0.40 m ceiling forced that shape; it gives a stable detour
 (section 7), so it has not been changed. Now that height is free, a taller or
 off-axis obstacle would be a more natural demo — that is a choice, not a fix.

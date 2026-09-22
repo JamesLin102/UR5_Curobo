@@ -521,7 +521,7 @@
   <joint name="gripper_base_joint" type="fixed">
     <parent link="tool0" />
     <child link="robotiq_arg2f_base_link" />
-    <origin rpy="0.0 0.0 1.57" xyz="0.0 0.0 0.0" />
+    <origin rpy="0.0 0.0 1.57" xyz="0.0 0.0 0.0550" />
   </joint>
   <joint name="left_outer_knuckle_joint" type="fixed">
     <origin rpy="0 0 3.1415" xyz="0 -0.0306011 0.054904" />
@@ -578,6 +578,57 @@
     <parent link="robotiq_arg2f_base_link" />
     <child link="grasp_frame" />
     <origin xyz="0 0 0.130324" rpy="0 0 0" />
+  </joint>
+  <link name="ft300_coupling">
+    <visual>
+      <geometry>
+        <mesh filename="../robotiq/ft300/meshes/visual/ft300_coupling.STL" />
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="../robotiq/ft300/meshes/collision/ft300_coupling.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="ft300_coupling_joint" type="fixed">
+    <parent link="tool0" />
+    <child link="ft300_coupling" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+  </joint>
+  <link name="ft300_sensor">
+    <visual>
+      <geometry>
+        <mesh filename="../robotiq/ft300/meshes/visual/robotiq_ft300.STL" />
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="../robotiq/ft300/meshes/collision/robotiq_ft300.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="ft300_sensor_joint" type="fixed">
+    <parent link="ft300_coupling" />
+    <child link="ft300_sensor" />
+    <origin xyz="0 0 0.0415" rpy="0 3.14159265 0" />
+  </joint>
+  <link name="wrist_camera">
+    <visual>
+      <geometry>
+        <box size="0.0875 0.0750 0.0224" />
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="0.0875 0.0750 0.0224" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="wrist_camera_joint" type="fixed">
+    <parent link="tool0" />
+    <child link="wrist_camera" />
+    <origin xyz="0 0 0.0483" rpy="0 0 0.0000" />
   </joint>
   <link name="camera_mount">
     <visual>

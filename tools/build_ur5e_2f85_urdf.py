@@ -33,9 +33,51 @@ GRIPPER_LINKS = [
     "right_inner_finger_pad", "right_inner_knuckle",
 ]
 
-# Same coupling as the 2F-140 build: both Robotiq 2F models bolt to tool0
-# through the identical 50 mm pattern, so reuse that URDF's attach transform.
-ATTACH = {"xyz": "0.0 0.0 0.0", "rpy": "0.0 0.0 1.57"}
+# --- the wrist stack, in the order it is bolted on the real robot ----------
+#     tool0 -> FT 300 -> Wrist Camera -> 2F-85
+#
+# FT 300 force-torque sensor. Meshes are the official ros-industrial ones
+# (BSD, LICENSE kept beside them); measured rather than taken from the
+# datasheet:
+#     coupling plate  75.0 x 74.9 x 13.0 mm
+#     sensor body     75.0 x 75.0 x 34.8 mm
+# The official xacro seats the sensor at z=+41.5 mm flipped 180 deg about Y,
+# so the plate's 13 mm and the sensor's recess overlap and the assembly adds
+# 41.5 mm along the tool axis. Reproduced here exactly.
+# The coupling plate ships as robotiq_ft300-G-062-COUPLING_G-50-4M6-1D6_
+# 20181119.STL and is stored here as ft300_coupling.STL, renamed on purpose.
+# Isaac Sim's URDF importer turns a mesh FILENAME into a USD prim name without
+# sanitising it, and "-" is not legal in one, so the hyphenated name produces a
+# null prim and the ENTIRE import fails with "RuntimeError: Used null prim" --
+# naming no file. (It does sanitise link and joint names, and says so in the
+# log, which is what makes the omission easy to miss.) Isolated by bisection:
+# swapping just this mesh for a box imports fine, renaming it imports fine,
+# converting it to .obj does not.
+FT300_MESH = "../robotiq/ft300/meshes"
+FT300_EXT = ".STL"
+FT300_SENSOR_Z = 0.0415
+FT300_SENSOR_RPY = "0 3.14159265 0"
+
+# Robotiq Wrist Camera. Robotiq ships NO public URDF or mesh for this one --
+# the ROS wiki says outright that the Wrist Camera is not supported -- so it
+# is a box at the documented outer dimensions, the same treatment the D435i
+# gets below. 87.5 x 75 x 22.4 mm body; mounted between an FT sensor and a
+# 2-finger gripper it adds 13.5 mm to the chain, which is the number that
+# actually matters for where the gripper ends up.
+CAM_PUCK = (0.0875, 0.075, 0.0224)
+WRIST_CAM_ADDED_Z = 0.0135
+# Rotation of the camera puck about the tool axis, read off the hardware
+# photos: the camera's two LEDs and its lens sit in a row along the puck's
+# LONG edge, and that row runs parallel to the direction the fingers open.
+# ATTACH yaws the gripper 90 deg relative to tool0, which puts the finger
+# opening along tool0's X -- so the puck's long edge (its own X, 87.5 mm) also
+# has to lie along tool0 X, i.e. no extra yaw.
+WRIST_CAM_YAW = 0.0
+
+# Gripper sits on top of both. Both Robotiq 2F models bolt through the same
+# 50 mm pattern, so the 2F-140 build's 90 deg yaw carries over.
+ATTACH = {"xyz": f"0.0 0.0 {FT300_SENSOR_Z + WRIST_CAM_ADDED_Z:.4f}",
+          "rpy": "0.0 0.0 1.57"}
 
 # Finger-pad height above the gripper base, summed along the 2F-85 chain:
 #   base->outer_knuckle  +0.054904
@@ -78,6 +120,72 @@ CAM_MOUNT_XYZ = (-0.050, 0.0, 0.020)
 # side the grasp point lies on). Untilted it sits 52 deg off-centre, outside
 # the 34.5 deg half-frame; -0.50 rad brings it to ~8 deg.
 CAM_TILT_RAD = 0.0
+
+
+def _fixed_joint(robot, name, parent, child, xyz, rpy="0 0 0"):
+    j = ET.SubElement(robot, "joint")
+    j.set("name", name)
+    j.set("type", "fixed")
+    ET.SubElement(j, "parent").set("link", parent)
+    ET.SubElement(j, "child").set("link", child)
+    o = ET.SubElement(j, "origin")
+    o.set("xyz", xyz)
+    o.set("rpy", rpy)
+    return j
+
+
+def _mesh_link(robot, name, visual_mesh, collision_mesh):
+    link = ET.SubElement(robot, "link")
+    link.set("name", name)
+    for tag, mesh in (("visual", visual_mesh), ("collision", collision_mesh)):
+        el = ET.SubElement(link, tag)
+        geom = ET.SubElement(el, "geometry")
+        ET.SubElement(geom, "mesh").set("filename", mesh)
+    return link
+
+
+def add_wrist_stack(robot: ET.Element) -> None:
+    """Bolt the FT 300 and the Wrist Camera between tool0 and the gripper.
+
+    Order matches the hardware: tool0 -> FT 300 coupling plate -> FT 300
+    sensor body -> Wrist Camera -> 2F-85. The gripper's own attach transform
+    (ATTACH) already carries the summed height, so this function only has to
+    place the two new bodies.
+
+    The camera is a box because no public mesh exists for it; the FT 300 uses
+    the real meshes. Both get collision geometry -- this is 5.5 cm of hardware
+    between the flange and the gripper, and the planner has to know it is
+    there.
+    """
+    # --- FT 300 -----------------------------------------------------------
+    _mesh_link(
+        robot, "ft300_coupling",
+        f"{FT300_MESH}/visual/ft300_coupling{FT300_EXT}",
+        f"{FT300_MESH}/collision/ft300_coupling{FT300_EXT}",
+    )
+    _fixed_joint(robot, "ft300_coupling_joint", "tool0", "ft300_coupling", "0 0 0")
+
+    _mesh_link(
+        robot, "ft300_sensor",
+        f"{FT300_MESH}/visual/robotiq_ft300{FT300_EXT}",
+        f"{FT300_MESH}/collision/robotiq_ft300{FT300_EXT}",
+    )
+    _fixed_joint(robot, "ft300_sensor_joint", "ft300_coupling", "ft300_sensor",
+                 f"0 0 {FT300_SENSOR_Z:.4f}", FT300_SENSOR_RPY)
+
+    # --- Wrist Camera -----------------------------------------------------
+    puck = ET.SubElement(robot, "link")
+    puck.set("name", "wrist_camera")
+    for tag in ("visual", "collision"):
+        el = ET.SubElement(puck, tag)
+        geom = ET.SubElement(el, "geometry")
+        ET.SubElement(geom, "box").set(
+            "size", " ".join(f"{v:.4f}" for v in CAM_PUCK))
+    # Centred on the added height, so the body straddles the joint between the
+    # sensor and the gripper the way the real puck does.
+    _fixed_joint(robot, "wrist_camera_joint", "tool0", "wrist_camera",
+                 f"0 0 {FT300_SENSOR_Z + WRIST_CAM_ADDED_Z / 2:.4f}",
+                 f"0 0 {WRIST_CAM_YAW:.4f}")
 
 
 def add_wrist_camera(robot: ET.Element) -> None:
@@ -167,6 +275,7 @@ def main():
     o.set("xyz", f"0 0 {GRASP_Z:.6f}")
     o.set("rpy", "0 0 0")
 
+    add_wrist_stack(robot)
     add_wrist_camera(robot)
 
     ET.indent(arm, space="  ")

@@ -26,8 +26,16 @@ print(f"[{name}] FK {tool:11s}: {st.tool_poses[tool].position.cpu().numpy().roun
 print(f"[{name}] spheres     : {tuple(st.robot_spheres.shape)}")
 
 scene = Scene(cuboid=[Cuboid(name="table", dims=[1.5, 1.5, 0.1], pose=[0, 0, -0.06, 1, 0, 0, 0])])
+# Trim tool_frames to the one goal frame. Every frame left in there is a frame
+# plan_pose demands a target for, so a config that also exposes camera_link for
+# forward kinematics -- which ur5e_robotiq_2f_85 does -- fails with
+# "Ordered link names [...] not a subset of [...]" unless it is trimmed.
+# planner_server.build() does the same thing for the same reason.
+import copy
+planner_dict = copy.deepcopy(load_robot_yaml(content))
+planner_dict["robot_cfg"]["kinematics"]["tool_frames"] = [tool]
 planner = MotionPlanner(MotionPlannerCfg.create(
-    robot=load_robot_yaml(content), scene_model=scene, use_cuda_graph=True))
+    robot=planner_dict, scene_model=scene, use_cuda_graph=True))
 planner.warmup()
 
 goal = GoalToolPose.from_poses({tool: Pose.from_list([0.4, 0.2, 0.4, 0, 1, 0, 0])})
