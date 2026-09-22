@@ -14,6 +14,7 @@ Run:
     python tools/build_ur5_robotiq_urdf.py
 """
 
+import math
 import os
 import xml.etree.ElementTree as ET
 
@@ -87,6 +88,17 @@ FLIP_VISUAL = {"robotiq_ft300_mounting_plate": (0.013, "0 3.14159265 0")}
 # the real bracket next to the spheres.
 HULL_COLLISION = ["camera_mount"]
 HULL_DIR = "hull"
+
+# Five of the six UR joints ship with a +/-360 degree range. With 720 degrees
+# to play in the planner picks IK branches that wind a wrist right round:
+# legal, ugly to watch, and it sometimes leaves the arm somewhere the next
+# target cannot be reached from. Real cells restrict these for cable
+# management anyway. The gripper joints are far inside this and untouched.
+#
+# This was a separate step in the old build (tools/clip_joint_limits.py, run
+# by hand between the two builders); folded in here so regenerating cannot
+# lose it.
+JOINT_LIMIT_DEG = 180.0
 
 # Isaac Sim's URDF importer derives USD prim names from these and does not
 # sanitise them; a hyphen aborts the whole import with "Used null prim".
@@ -184,6 +196,19 @@ def main():
         limit.set("effort", effort)
         limit.set("velocity", velocity)
 
+    clipped = []
+    lim = math.radians(JOINT_LIMIT_DEG)
+    for j in robot.findall("joint"):
+        limit = j.find("limit")
+        if j.get("type") != "revolute" or limit is None:
+            continue
+        lo, hi = float(limit.get("lower")), float(limit.get("upper"))
+        new = (max(lo, -lim), min(hi, lim))
+        if new != (lo, hi):
+            limit.set("lower", f"{new[0]:.6f}")
+            limit.set("upper", f"{new[1]:.6f}")
+            clipped.append(j.get("name"))
+
     def frame(name, parent, xyz="0 0 0"):
         ET.SubElement(robot, "link").set("name", name)
         j = ET.SubElement(robot, "joint")
@@ -211,6 +236,8 @@ def main():
           f"leader {rename(LEADER)}")
     print(f"  grasp_frame {GRASP_Z:.6f} m above {GRASP_PARENT}")
     print(f"  camera_link aliases {CAMERA_PARENT}")
+    print(f"  clipped {len(clipped)} joints to +/-{JOINT_LIMIT_DEG:.0f} deg: "
+          f"{', '.join(clipped)}")
 
 
 if __name__ == "__main__":

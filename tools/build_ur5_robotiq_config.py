@@ -48,12 +48,18 @@ ARM_JOINTS = ["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
 #
 # The automatic count, for comparison, was 87 over the same six links.
 #
-# base_link_inertia is the one departure: ur5e.yml leaves the base bare, but
-# the CB3 base is a 24 mm plate the shoulder swings right over, so it keeps a
-# few.
+# The base gets NO spheres, following ur5e.yml. This is not an oversight in
+# NVIDIA's config, it is the only workable choice: the base is bolted to the
+# table, so any sphere on it sits inside the table cuboid for every
+# configuration -- measured at 17.1 mm of penetration, at HOME and at both
+# targets alike -- and the planner then reports the robot as in collision no
+# matter what it is asked. Eight base spheres were tried here and did exactly
+# that: every plan failed, with no map loaded at all. Nothing the planner can
+# do moves the base, so there is nothing to check.
+NO_SPHERES = ["base_link_inertia"]
+
 ARM_SPHERES = {
-    "base_link_inertia": 8,
-    "shoulder_link": 1,
+    "shoulder_link": 2,
     "upper_arm_link": 8,
     "forearm_link": 9,
     "wrist_1_link": 4,
@@ -67,7 +73,42 @@ ARM_SPHERES = {
 # whatever the first one produced. cuRobo's shipped ur5e spheres score 0.774
 # to 1.000 on this same metric, so this bar is above its own tuning.
 MIN_COVERAGE = 0.90
-ATTEMPTS = 4
+# Eight, not four: a clamped link's fit is much more variable, because MORPHIT
+# sometimes returns fewer spheres than asked and one clamped sphere cannot
+# cover a shoulder. A run that came back with a single 62 mm ball at 0.648 was
+# caught by the coverage bar below and cost a whole rebuild.
+ATTEMPTS = 8
+
+# Links whose spheres may not reach below their own geometry.
+#
+# The shoulder is the reason. MorphIt covers it with one 80 mm ball, which is
+# 20 mm wider than the metal and hangs to base z = +4 mm -- and the CB3
+# shoulder sits at z = 89 mm, 73 mm lower than the e-Series one cuRobo's
+# config was tuned on, so that ball ends up 15 mm off the table instead of
+# 62 mm. The real table is a cuboid the planner is told about and 15 mm is
+# enough for it; the MAPPED table is a 2 cm voxel grid on top of that, and it
+# is not. Measured live: with the ball, the collision-aware IK refused BOTH
+# goals and every plan failed, with the map showing nothing inside the robot.
+#
+# upper_arm_link needs it for the same reason and was found the same way: with
+# the shoulder fixed, the goals were still refused, and its spheres reached
+# 14 mm below its own metal -- 40 mm of real clearance over the table becoming
+# 26 mm of sphere clearance, which the mapped table's 2 cm voxels then closed.
+#
+# Only these two links come near the table. The wrist spheres protrude just as
+# far but do it 470 mm up, where it costs nothing.
+#
+# Clipping is done by clamping radii, not by cuRobo's clip_plane, whose 20 mm
+# buffer discards whole spheres and drops the shoulder to 0.40 coverage.
+FLOOR_CLAMP = ["shoulder_link", "upper_arm_link"]
+
+# A clamped link cannot reach MIN_COVERAGE -- across runs the shoulder lands
+# at 0.78-0.83 and the upper arm at 0.83-0.86, with the uncovered band along
+# their lower side, which is the side deliberately pulled back. cuRobo's own
+# ur5e.yml scores 0.774 on its worst link, so this bar is its bar rather than
+# a new one, and what it really guards against is the collapsed fit: one run
+# put a single 62 mm ball on the shoulder at 0.648.
+MIN_COVERAGE_CLAMPED = 0.78
 
 # The wrist stack and gripper get budgets too, so every link's sphere count is
 # stated here rather than left to whatever the estimator happened to pick that
@@ -178,16 +219,45 @@ def link_mesh(link):
     return trimesh.util.concatenate(parts) if len(parts) > 1 else parts[0]
 
 
-def fit_budgeted(mesh, budget):
-    """Best of ATTEMPTS fits at a fixed sphere count, by coverage."""
+def _np(x):
+    import torch
+    return x.detach().cpu().numpy() if isinstance(x, torch.Tensor) else np.asarray(x)
+
+
+def fit_budgeted(mesh, budget, clamp_floor=False):
+    """Best of ATTEMPTS fits at a fixed sphere count, by coverage.
+
+    With clamp_floor, every sphere's radius is cut back so it does not reach
+    below the mesh's own lowest point, and the metrics are recomputed from the
+    clamped spheres -- so the number reported is the number that ships.
+    """
+    floor = float(mesh.bounds[0][2])
     best = None
     for _ in range(ATTEMPTS):
         r = fit_spheres_to_mesh(mesh, num_spheres=budget,
                                 fit_type=SphereFitType.MORPHIT,
-                                iterations=400, compute_metrics=True)
-        if best is None or r.metrics.coverage > best.metrics.coverage:
-            best = r
-    return best
+                                iterations=400, compute_metrics=not clamp_floor)
+        C = _np(r.centers).astype(float)
+        R = _np(r.radii).astype(float).ravel()
+        if clamp_floor:
+            R = np.minimum(R, np.maximum(C[:, 2] - floor, 1e-4))
+            keep = R > 0.004
+            C, R = C[keep], R[keep]
+            if not len(C):
+                continue
+            metrics = compute_sphere_fit_metrics(mesh, C, R)
+        else:
+            metrics = r.metrics
+        # Rank by sphere COUNT first, then coverage. MORPHIT sometimes
+        # returns fewer spheres than asked for, and on a clamped link one
+        # survivor cannot cover anything -- the shoulder came back as a single
+        # ball at 0.65 twice. Coverage alone does not separate those from a
+        # genuine two-sphere fit, because a fat lone ball scores respectably
+        # until the clamp cuts it down.
+        rank = (min(len(C), budget), metrics.coverage)
+        if best is None or rank > best[0]:
+            best = (rank, metrics, C, R)
+    return best[1:]
 
 
 def main():
@@ -208,6 +278,10 @@ def main():
     k = built.get("robot_cfg", built)["kinematics"]
 
     # Re-fit the arm to the ur5e budget, and report what every link scored.
+    for name in NO_SPHERES:
+        k["collision_link_names"] = [n for n in k["collision_link_names"] if n != name]
+        k["collision_spheres"].pop(name, None)
+
     urdf_links = {l.get("name"): l for l in ET.parse(URDF).getroot().findall("link")}
     print(f"  {'link':<36s} {'n':>3s} {'r (mm)':>9s} {'cover':>6s} {'protr':>6s} {'gap95':>8s}")
     failed = []
@@ -226,13 +300,15 @@ def main():
             if m.coverage < MIN_COVERAGE:
                 failed.append((name, m.coverage))
         elif name in BUDGET:
-            r = fit_budgeted(mesh, BUDGET[name])
+            clamped = name in FLOOR_CLAMP
+            m, C, R = fit_budgeted(mesh, BUDGET[name], clamp_floor=clamped)
             k["collision_spheres"][name] = [
-                {"center": c, "radius": rad}
-                for c, rad in zip(r.centers.tolist(), r.radii.tolist())
+                {"center": [float(v) for v in c], "radius": float(rad)}
+                for c, rad in zip(C, R)
             ]
-            m, n, lo, hi = r.metrics, r.num_spheres, r.radii.min(), r.radii.max()
-            if m.coverage < MIN_COVERAGE:
+            n, lo, hi = len(R), R.min(), R.max()
+            bar = MIN_COVERAGE_CLAMPED if clamped else MIN_COVERAGE
+            if m.coverage < bar:
                 failed.append((name, m.coverage))
         else:
             raise SystemExit(f"{name} has collision geometry but no sphere budget")

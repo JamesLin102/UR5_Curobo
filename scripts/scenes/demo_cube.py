@@ -188,6 +188,12 @@ MAPPER = {
     "self_mask_margin": 0.12,
     "esdf_every_n_frames": 10,      # recompute the distance field this often
     "minimum_tsdf_weight": 0.01,
+    # Do not fuse anything at or below this height. The table lives in
+    # OBSTACLES, where the planner knows it exactly; mapping it again only
+    # produces a fatter duplicate, and on a UR5 (CB3) the shoulder sits low
+    # enough that the duplicate swallows the upper arm's own spheres. See
+    # Planner.map_floor.
+    "floor_z": 0.02,
 }
 
 

@@ -68,7 +68,10 @@ class SceneSpec:
                       "pose"  fixed in world, [x,y,z,qw,qx,qy,qz], OPTICAL
                               frame (+Z along the view, +X right, +Y down).
         mapper      TSDF/ESDF settings; see demo_cube.py for what each one
-                    does and what it costs to get wrong.
+                    does and what it costs to get wrong. Optional key
+                    "floor_z": nothing at or below that height is fused, so a
+                    surface the planner already knows exactly (the table) is
+                    not also mapped as a fatter duplicate.
 
     Optional:
         unmapped    bodies that exist ONLY in the simulator. The planner is

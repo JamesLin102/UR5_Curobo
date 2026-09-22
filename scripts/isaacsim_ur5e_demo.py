@@ -152,31 +152,129 @@ class Planner:
 
 # The 2F-85 is two mirrored 4-bar linkages. A 4-bar needs a loop closure, and
 # URDF is a tree, so in the model the inner knuckle hangs off the base as its
-# own branch with nothing tying it to the finger. Under load the branches stall
-# at different angles -- measured 0.22 rad apart within one side while gripping
-# -- and the linkage visibly comes apart.
+# own branch with nothing tying it to the finger tip. Under load the branches
+# stall at different angles -- measured 0.22 rad apart within one side while
+# gripping -- and the linkage visibly comes apart.
 #
-# USD is not a tree, so the pin can be added back here. Anchors derived from
-# the geometry: at angle 0 the two links sit in their correct relative pose,
-# and their closest surface points (4.66 mm apart) are where the real pin goes.
-# Identical on both sides, which is a good sign the derivation is right.
-GRIPPER_PIN = {
-    "knuckle": (0.00975, 0.03997, 0.04804),
-    "finger": (0.00975, -0.01553, 0.01156),
-}
+# USD is not a tree, so the pin can be added back here.
+#
+# Where the pin goes is READ OFF THE URDF rather than measured off the meshes.
+# The mechanism is a parallelogram: the coupler's mimic multipliers are
+# knuckle +1, finger_tip -1, so the finger tip's absolute orientation stays
+# fixed, which is a parallelogram's defining property. With pivots
+#
+#     A = knuckle joint          C = finger_tip joint  (in base coords at 0)
+#     B = inner_knuckle joint    D = the missing pin
+#
+# a parallelogram gives D = B + (C - A) exactly. No mesh fitting, no closest-
+# surface-point search, and it stays right if the URDF is regenerated.
+GRIPPER_PIN_AXIS = "Y"      # every 2F-85 joint turns about this link's Y
+
+
+def _gripper_pin_anchors(urdf_path):
+    """Pin anchors, per side, in the inner knuckle's and finger tip's frames.
+
+    Returns {side: ((x, y, z) on inner_knuckle, (x, y, z) on finger_tip)}.
+    """
+    import xml.etree.ElementTree as ET
+
+    root = ET.parse(urdf_path).getroot()
+    origin = {}
+    for j in root.findall("joint"):
+        o = j.find("origin")
+        xyz = (o.get("xyz") if o is not None else None) or "0 0 0"
+        origin[j.get("name")] = np.array([float(v) for v in xyz.split()])
+
+    out = {}
+    for side in ("left", "right"):
+        p = f"robotiq_85_{side}_"
+        try:
+            A = origin[p + "knuckle_joint"]
+            B = origin[p + "inner_knuckle_joint"]
+            # C is the finger tip's pivot in BASE coordinates, so walk the
+            # chain: the finger is fixed to the knuckle, the tip to the finger.
+            C = A + origin[p + "finger_joint"] + origin[p + "finger_tip_joint"]
+        except KeyError as missing:
+            raise RuntimeError(
+                f"{urdf_path} has no {missing}; the 4-bar cannot be closed")
+        D = B + (C - A)
+        out[side] = (D - B, D - C)
+    return out
+
+
+_URDF_TREE = None
+
+
+def _urdf_tree():
+    """child link -> (parent link, 4x4 transform), for the whole URDF."""
+    global _URDF_TREE
+    if _URDF_TREE is None:
+        import xml.etree.ElementTree as ET
+
+        def rpy(r, p, y):
+            cr, sr, cp, sp, cy, sy = (math.cos(r), math.sin(r), math.cos(p),
+                                      math.sin(p), math.cos(y), math.sin(y))
+            return np.array([[cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+                             [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+                             [-sp, cp * sr, cp * cr]])
+
+        _URDF_TREE = {}
+        for j in ET.parse(URDF).getroot().findall("joint"):
+            o = j.find("origin")
+            T = np.eye(4)
+            if o is not None:
+                T[:3, 3] = [float(v) for v in (o.get("xyz") or "0 0 0").split()]
+                T[:3, :3] = rpy(*[float(v) for v in (o.get("rpy") or "0 0 0").split()])
+            _URDF_TREE[j.find("child").get("link")] = (j.find("parent").get("link"), T)
+    return _URDF_TREE
+
+
+def frame_prim(stage, prim_path, link):
+    """Prim path for `link`, recreating it if merge_fixed_joints ate it.
+
+    Merging keeps a prim for every link that carries geometry and discards the
+    pure frames. Walk up the URDF to the nearest link that does have a prim,
+    carry the transform along, and hang an Xform there. An Xform under a rigid
+    body is just a frame -- it adds nothing for PhysX to solve, which is the
+    whole point of having merged in the first place.
+
+    Returns (path of `link`, path of the body it was merged into).
+    """
+    if stage.GetPrimAtPath(f"{prim_path}/{link}").IsValid():
+        return f"{prim_path}/{link}", f"{prim_path}/{link}"
+    tree = _urdf_tree()
+    T, node = np.eye(4), link
+    while node in tree:
+        parent, M = tree[node]
+        T = M @ T
+        if stage.GetPrimAtPath(f"{prim_path}/{parent}").IsValid():
+            host = f"{prim_path}/{parent}"
+            xf = UsdGeom.Xform.Define(stage, f"{host}/{link}")
+            R, t = T[:3, :3], T[:3, 3]
+            # USD multiplies row vectors, so its matrix is the transpose of
+            # this one with the translation along the bottom row.
+            xf.AddTransformOp().Set(Gf.Matrix4d(
+                float(R[0][0]), float(R[1][0]), float(R[2][0]), 0.0,
+                float(R[0][1]), float(R[1][1]), float(R[2][1]), 0.0,
+                float(R[0][2]), float(R[1][2]), float(R[2][2]), 0.0,
+                float(t[0]), float(t[1]), float(t[2]), 1.0))
+            return f"{host}/{link}", host
+        node = parent
+    raise RuntimeError(f"{link} is not in {URDF}, or has no ancestor with a prim")
 
 
 def close_gripper_linkage(stage, prim_path):
-    """Pin each inner knuckle to its inner finger, closing the 4-bar in PhysX.
+    """Pin each inner knuckle to its finger tip, closing the 4-bar in PhysX.
 
     Without this the knuckle is driven open-loop and fights whatever it
     touches. With it, the knuckle's angle comes from the mechanism, which is
     where it comes from on the real gripper.
     """
+    anchors = _gripper_pin_anchors(URDF)
     made = []
-    for side in ("left", "right"):
-        k = stage.GetPrimAtPath(f"{prim_path}/{side}_inner_knuckle")
-        f = stage.GetPrimAtPath(f"{prim_path}/{side}_inner_finger")
+    for side, (on_knuckle, on_tip) in anchors.items():
+        k = stage.GetPrimAtPath(f"{prim_path}/robotiq_85_{side}_inner_knuckle_link")
+        f = stage.GetPrimAtPath(f"{prim_path}/robotiq_85_{side}_finger_tip_link")
         if not (k.IsValid() and f.IsValid()):
             print(f"[demo] cannot pin {side} linkage: link prim missing")
             continue
@@ -184,23 +282,39 @@ def close_gripper_linkage(stage, prim_path):
         j = UsdPhysics.RevoluteJoint.Define(stage, path)
         j.CreateBody0Rel().SetTargets([k.GetPath()])
         j.CreateBody1Rel().SetTargets([f.GetPath()])
-        j.CreateLocalPos0Attr().Set(Gf.Vec3f(*GRIPPER_PIN["knuckle"]))
-        j.CreateLocalPos1Attr().Set(Gf.Vec3f(*GRIPPER_PIN["finger"]))
-        # Planar mechanism: the pin turns about the same X the other gripper
-        # joints do. Leaving the limits off keeps it a free hinge.
-        j.CreateAxisAttr().Set("X")
+        j.CreateLocalPos0Attr().Set(Gf.Vec3f(*on_knuckle.tolist()))
+        j.CreateLocalPos1Attr().Set(Gf.Vec3f(*on_tip.tolist()))
+        # Planar mechanism: the pin turns about the same axis the other
+        # gripper joints do. Leaving the limits off keeps it a free hinge.
+        j.CreateAxisAttr().Set(GRIPPER_PIN_AXIS)
         j.CreateExcludeFromArticulationAttr().Set(True)
         made.append(side)
     if made:
+        one = anchors[made[0]]
         print(f"[demo] 4-bar closed: pinned {', '.join(made)} inner knuckle "
-              f"to inner finger")
+              f"to finger tip about {GRIPPER_PIN_AXIS}, "
+              f"anchor {np.round(one[0], 5).tolist()} / "
+              f"{np.round(one[1], 5).tolist()}")
     return made
 
 
 def build_stage(world):
     """Import the arm from URDF, add obstacles, and hide one from the planner."""
     status, cfg = omni.kit.commands.execute("URDFCreateImportConfig")
-    cfg.merge_fixed_joints = False
+    # MERGE the fixed joints. This URDF has 26 links that are pure coordinate
+    # frames -- tool0, flange, grasp_frame, camera_link and the D435i's six
+    # optical frames among them -- with no mass and no geometry. Imported as
+    # separate bodies the importer gives each "a small isotropic inertia", and
+    # a chain of twenty near-massless bodies hanging off the wrist wrecks the
+    # articulation solver: holding HOME, wrist_1 drifted up to 770 mrad while
+    # every other joint stayed inside 5 mrad. Merging drops that to 4.4 mrad.
+    # Measured both ways; the 4-bar pin was ruled out first (663 mrad with it
+    # removed).
+    #
+    # Fixed joints are not degrees of freedom, so nothing is lost mechanically
+    # -- but the merged frames have no prims any more, which is what
+    # frame_prim() below exists to paper over.
+    cfg.merge_fixed_joints = True
     cfg.fix_base = True
     cfg.make_default_prim = False
     cfg.create_physics_scene = False
@@ -280,7 +394,10 @@ def build_stage(world):
             )
             cube.apply_physics_material(grip_mat)
             payload[name] = cube
-        for link in ("left_inner_finger_pad", "right_inner_finger_pad"):
+        # The finger tip carries the rubber pad; this model has no separate
+        # pad link, so the friction goes on the tip itself.
+        for link in ("robotiq_85_left_finger_tip_link",
+                     "robotiq_85_right_finger_tip_link"):
             p = world.stage.GetPrimAtPath(f"{prim_path}/{link}/collisions")
             if p.IsValid():
                 UsdShade.MaterialBindingAPI(p).Bind(
@@ -335,9 +452,7 @@ def attach_wrist_camera(world, prim_path):
     down, which prints the view direction in camera_link axes.
     """
     spec = SCENE.cameras["wrist"]
-    link = f"{prim_path}/{spec['link']}"
-    if not world.stage.GetPrimAtPath(link).IsValid():
-        raise RuntimeError(f"{link} missing - rebuild the URDF with tools/build_ur5_robotiq_urdf.py")
+    link, body = frame_prim(world.stage, prim_path, spec["link"])
 
     cam = Camera(
         prim_path=f"{link}/d435i",
@@ -369,11 +484,10 @@ def attach_wrist_camera(world, prim_path):
     print(f"[demo]   view in camera_link axes: {local.round(3)}  "
           f"(want [0 0 1])")
     # Image-horizontal should run along the camera body's long edge, which is
-    # camera_mount's +Y. Check the roll, not just the view direction.
-    m_mount = cache.GetLocalToWorldTransform(
-        world.stage.GetPrimAtPath(f"{prim_path}/camera_mount"))
+    # +Y of the D435i's own link. Check the roll, not just the view direction.
+    m_body = cache.GetLocalToWorldTransform(world.stage.GetPrimAtPath(body))
     img_right = axis(m_link, 0)     # optical +X after the URDF yaw
-    bar = axis(m_mount, 1)          # long edge of the D435i body
+    bar = axis(m_body, 1)           # long edge of the D435i body
     # Signed, not |dot|: +1 and -1 both mean "aligned with the long edge" but
     # they differ by a 180 degree roll, i.e. an upside-down image. An earlier
     # version compared magnitudes and happily passed the flipped one.

@@ -149,6 +149,24 @@ class Mapping:
             n = len(robot_dict["robot_cfg"]["kinematics"]["collision_spheres"][name])
             self.sphere_link.extend([name] * n)
 
+        # Height below which nothing is fused, or None.
+        #
+        # The table is a static cuboid the planner is told about EXACTLY.
+        # Letting the cameras map it as well adds a second, fatter copy of it:
+        # 2.5 cm ESDF voxels plus the planner's collision activation distance.
+        # On a UR5 (CB3) that copy is fatal -- its shoulder sits at z = 89 mm,
+        # 73 mm lower than the e-Series arm cuRobo's config was tuned on, so
+        # the upper arm's own spheres are permanently inside the inflated
+        # duplicate however high the goal is. Measured: the collision-aware IK
+        # refused BOTH goals of demo_cube and of baseline, on every attempt,
+        # while the map correctly reported nothing inside the robot; the
+        # closest link was upper_arm_link at 15 mm.
+        #
+        # This does NOT let the arm hit the table: the real one is still in the
+        # static scene and still checked. It only stops the duplicate.
+        self.map_floor = mapper_cfg.get("floor_z")
+        self._pixel_grid = {}
+
         self.frames = 0
         self.voxel_grid = None
         self.last_esdf_ms = 0.0
@@ -205,6 +223,8 @@ class Mapping:
             js,
         )
         filtered, _ = rig["filter"](masked)
+        if self.map_floor is not None:
+            filtered = self._above_floor(filtered, K, cam_pose, cam_name)
 
         # RGB is unused here, but Mapper.integrate dereferences it
         # unconditionally even though the colour grid is nominally optional.
@@ -224,6 +244,32 @@ class Mapping:
         self.last_q = q
         rig["frames"] += 1
         self.frames += 1
+
+    def _above_floor(self, depth, K, pose, cam_name):
+        """Blank out depth pixels that land at or below self.map_floor.
+
+        Unprojects with the camera's own intrinsics, rotates into world with
+        the pose the frame was integrated at, and keeps only the world-z row
+        of the rotation -- the other two are not needed to answer "how high is
+        this point".
+        """
+        d = depth[0]
+        h, w = d.shape
+        grid = self._pixel_grid.get(cam_name)
+        if grid is None:
+            v, u = torch.meshgrid(
+                torch.arange(h, device=d.device, dtype=d.dtype),
+                torch.arange(w, device=d.device, dtype=d.dtype),
+                indexing="ij",
+            )
+            grid = self._pixel_grid[cam_name] = (u, v)
+        u, v = grid
+        x = (u - K[0, 2]) * d / K[0, 0]
+        y = (v - K[1, 2]) * d / K[1, 1]
+        r = pose.get_rotation_matrix().view(3, 3)
+        z = x * r[2, 0] + y * r[2, 1] + d * r[2, 2] + pose.position.view(3)[2]
+        # depth 0 already means "no reading"; leave those alone.
+        return torch.where((z > self.map_floor) | (d <= 0), d, torch.zeros_like(d))[None]
 
     def _count_self_hits(self, voxels) -> int:
         """Occupied voxels sitting inside the robot at its last known pose."""
@@ -253,7 +299,17 @@ class Mapping:
         hit = d < spheres[:, 3].unsqueeze(0)
         inside = hit.any(dim=1).sum().item()
         if not inside:
-            return f"{len(centers)} occupied voxels, none inside the robot"
+            # "Nothing inside a sphere" is NOT "nothing in the way": the
+            # planner pushes away from an obstacle from its activation
+            # distance, so a link that merely PASSES CLOSE to a mapped surface
+            # blocks the plan while this count stays at zero. Report the
+            # clearance as well, or a shoulder skimming the mapped table looks
+            # identical to a clear map.
+            gap = (d - spheres[:, 3].unsqueeze(0)).min(dim=0).values
+            j = int(gap.argmin().item())
+            return (f"{len(centers)} occupied voxels, none inside the robot; "
+                    f"closest is {self.sphere_link[j]} at "
+                    f"{float(gap[j]) * 1000:+.0f} mm")
         # Which links? sphere_index -> link, using the config's declared order.
         per_link = {}
         for si in hit.any(dim=0).nonzero().flatten().tolist():
@@ -323,7 +379,7 @@ def build(robot_key, scene, use_cuda_graph=True):
     content = ContentPath(
         robot_config_absolute_path=f"{ROOT}/{spec['config']}",
         robot_urdf_absolute_path=f"{ROOT}/{spec['urdf']}",
-        robot_asset_absolute_path=f"{ROOT}/assets/robot/ur_description",
+        robot_asset_absolute_path=f"{ROOT}/{spec.get('assets', 'assets/robot/ur_description')}",
     )
     robot_dict = load_robot_yaml(content)
 
@@ -366,11 +422,24 @@ def build(robot_key, scene, use_cuda_graph=True):
     # vertical, and it is seeded from a pose directly above the target, which
     # is what makes that acceptable here and would not make it acceptable for
     # a long move.
-    approach_ik = InverseKinematics(planner.config.ik_solver_config, None)
+    # DEEP COPY the config. Handing the planner's own ik_solver_config to a
+    # second solver corrupts the planner: with CUDA graphs on, every plan then
+    # fails, from the very first call, with no diagnosis beyond "no solution".
+    # Reproduced on cuRobo's own shipped ur5e config as well, so it is not
+    # this robot, and it costs nothing to avoid:
+    #
+    #     second solver from the shared config : plan FAIL, FAIL, FAIL
+    #     second solver from a deep copy       : plan ok,   ok,   ok
+    #     no second solver at all              : plan ok,   ok,   ok
+    #
+    # The two solvers share mutable state through that config, and building
+    # the second one is enough to break the first's captured graph.
+    approach_ik = InverseKinematics(copy.deepcopy(planner.config.ik_solver_config),
+                                    None)
     return kin, planner, approach_ik, robot_dict, spec["tool_frame"]
 
 
-def handle_plan(planner, kin, tool_frame, header):
+def handle_plan(planner, kin, tool_frame, header, approach_ik=None):
     q = torch.tensor([header["q"]], device="cuda", dtype=torch.float32)
     start = JointState.from_position(q, joint_names=kin.joint_names)
     goal = GoalToolPose.from_poses({tool_frame: Pose.from_list(header["target"])})
@@ -379,6 +448,27 @@ def handle_plan(planner, kin, tool_frame, header):
     out = {"ok": ok, "joint_names": list(kin.joint_names), "tool_frame": tool_frame}
     if not ok:
         out["status"] = str(getattr(res, "status", "unknown"))
+        # plan_pose says nothing about WHY. Ask the same collision checker for
+        # the goal alone: a goal its IK refuses is a goal in collision, which
+        # is a different problem from a goal it can reach but not route to.
+        ik = planner.ik_solver.solve_pose(goal, current_state=start)
+        if ik is None or not bool(ik.success.any()):
+            out["goal"] = "goal REFUSED by collision-aware IK"
+            # Solve it again with collisions off, purely to have a
+            # configuration to measure. Without this the diagnosis stops at
+            # "refused" and cannot say what it was refused against.
+            if approach_ik is not None:
+                free = approach_ik.solve_pose(goal, current_state=start)
+                if free is not None and bool(free.success.any()):
+                    out["goal_q"] = (free.solution[free.success]
+                                     .view(-1, len(kin.joint_names))[0]
+                                     .cpu().numpy().astype(float).tolist())
+                else:
+                    out["goal"] += " and unreachable even without collisions"
+        else:
+            out["goal"] = "goal reachable"
+            out["goal_q"] = (ik.solution[ik.success].view(-1, len(kin.joint_names))[0]
+                             .cpu().numpy().astype(float).tolist())
         return out, b""
     # The trajectory is WIDER than the cspace: cuRobo appends the joints it
     # was told to lock, so a 6-DOF plan on a robot with a locked gripper comes
@@ -507,7 +597,7 @@ def main():
                     send_msg(conn, out, blob)
 
                 elif op == "plan":
-                    out, blob = handle_plan(planner, kin, tool_frame, header)
+                    out, blob = handle_plan(planner, kin, tool_frame, header, approach_ik)
                     if out["ok"]:
                         print(f"[planner] plan ok: {out['solve_ms']:.0f} ms, "
                               f"{out['n']} waypoints", flush=True)
@@ -516,8 +606,13 @@ def main():
                         if mapping is not None:
                             q = torch.tensor([header["q"]], device="cuda",
                                              dtype=torch.float32)
-                            diag = " | " + mapping.self_hit_report(q)
-                        print(f"[planner] plan FAILED: {out['status']}{diag}", flush=True)
+                            diag = " | start: " + mapping.self_hit_report(q)
+                            if "goal_q" in out:
+                                gq = torch.tensor([out["goal_q"]], device="cuda",
+                                                  dtype=torch.float32)
+                                diag += " | goal: " + mapping.self_hit_report(gq)
+                        print(f"[planner] plan FAILED: {out.get('goal', out['status'])}"
+                              f"{diag}", flush=True)
                     send_msg(conn, out, blob)
 
                 elif op == "map":
