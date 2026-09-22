@@ -39,6 +39,7 @@ from curobo.kinematics import Kinematics, KinematicsCfg  # noqa: E402
 from curobo.scene import Cuboid, Scene  # noqa: E402
 from curobo.perception import FilterDepth, Mapper, MapperCfg, RobotSegmenter  # noqa: E402
 from curobo.motion_planner import MotionPlanner, MotionPlannerCfg  # noqa: E402
+from curobo.inverse_kinematics import InverseKinematics  # noqa: E402
 from curobo._src.robot.loader.util import load_robot_yaml  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -353,7 +354,20 @@ def build(robot_key, scene, use_cuda_graph=True):
         )
     )
     planner.warmup()
-    return kin, planner, robot_dict, spec["tool_frame"]
+
+    # A SECOND IK solver, built from the planner's own config but with NO
+    # collision checker. The final approach of a grasp targets a pose inside
+    # the payload, and the payload is in the map -- so the planner's own
+    # collision-aware IK refuses it, every time, which is what left the arm
+    # shuttling to the pre-grasp pose and stopping. This one solves pure
+    # kinematics.
+    #
+    # The trade is explicit: nothing checks the approach. It is short, it is
+    # vertical, and it is seeded from a pose directly above the target, which
+    # is what makes that acceptable here and would not make it acceptable for
+    # a long move.
+    approach_ik = InverseKinematics(planner.config.ik_solver_config, None)
+    return kin, planner, approach_ik, robot_dict, spec["tool_frame"]
 
 
 def handle_plan(planner, kin, tool_frame, header):
@@ -389,6 +403,33 @@ def handle_plan(planner, kin, tool_frame, header):
     return out, traj[:n].contiguous().cpu().numpy().astype(np.float32).tobytes()
 
 
+def handle_ik(approach_ik, kin, tool_frame, header):
+    """Joint angles for one tool pose, seeded from the current state.
+
+    Used for the last few centimetres of a grasp, where plan_pose is no help:
+    the thing being reached for is in the map, and the planner will not route a
+    tool into an obstacle. Solving IK for the end pose and interpolating joints
+    to it keeps both ENDPOINTS exact. The path between them is joint-space, not
+    a Cartesian line, which is fine over a short move and is not fine over a
+    long one.
+
+    A deliberately wrong alternative, for the record: approximating the descent
+    as shoulder_lift and elbow moving oppositely. Measured, that combination
+    gives dz/dq = -0.11 m/rad and dx/dq = -0.40 -- mostly horizontal, and the
+    opposite sign to the guess it replaced.
+    """
+    q = torch.tensor([header["q"]], device="cuda", dtype=torch.float32)
+    seed = JointState.from_position(q, joint_names=kin.joint_names)
+    goal = GoalToolPose.from_poses({tool_frame: Pose.from_list(header["target"])})
+    res = approach_ik.solve_pose(goal, current_state=seed)
+    ok = res is not None and bool(res.success.any())
+    if not ok:
+        return {"ok": False, "status": "ik failed"}, b""
+    sol = res.solution[res.success].view(-1, len(kin.joint_names))[0]
+    return ({"ok": True, "joint_names": list(kin.joint_names)},
+            sol.contiguous().cpu().numpy().astype(np.float32).tobytes())
+
+
 def main():
     import warp as wp
 
@@ -405,7 +446,7 @@ def main():
     print(f"[planner] warp {wp.config.version}  robot {args.robot}  "
           f"scene {args.scene}", flush=True)
     print("[planner] building (first run compiles CUDA kernels)...", flush=True)
-    kin, planner, robot_dict, tool_frame = build(
+    kin, planner, approach_ik, robot_dict, tool_frame = build(
         args.robot, scene, use_cuda_graph=not args.no_cuda_graph)
     print(f"[planner] planner ready. tool={tool_frame}", flush=True)
 
@@ -457,6 +498,13 @@ def main():
                               f"server is running {args.scene!r} - it will stop",
                               flush=True)
                     send_msg(conn, {"ok": asked == args.scene, "scene": args.scene})
+
+                elif op == "ik":
+                    out, blob = handle_ik(approach_ik, kin, tool_frame, header)
+                    if not out["ok"]:
+                        print(f"[planner] ik FAILED for {header.get('target')}",
+                              flush=True)
+                    send_msg(conn, out, blob)
 
                 elif op == "plan":
                     out, blob = handle_plan(planner, kin, tool_frame, header)

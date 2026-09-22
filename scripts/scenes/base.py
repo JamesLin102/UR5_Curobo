@@ -19,6 +19,11 @@ from typing import Dict, List, Optional, Sequence, Tuple
 # name, dims (full extents, m), pose [x, y, z, qw, qx, qy, qz], rgb 0..1
 Body = Tuple[str, List[float], List[float], Tuple[float, float, float]]
 
+# A Body plus a mass in kg. Unlike the other two kinds of object in a scene,
+# this one is a real rigid body: it falls, it can be squeezed, and it comes
+# away when the gripper closes on it.
+Payload = Tuple[str, List[float], List[float], Tuple[float, float, float], float]
+
 
 @dataclass(frozen=True)
 class WatchBox:
@@ -70,6 +75,16 @@ class SceneSpec:
                     never told about them, so avoiding them is proof that
                     perception is driving the plan. This is where a scene puts
                     the thing it wants the cameras to discover.
+        payload     rigid bodies to be PICKED UP, with a mass. Distinct from
+                    `unmapped`, which is visual-only and meant to be avoided:
+                    a payload is meant to be reached, and the cameras will map
+                    it as an obstacle like anything else. `pick` says how to
+                    get the last few centimetres.
+        pick        {"descend_m": ..., "lift_m": ...}. The planner routes to a
+                    pose ABOVE the payload, which is a place the map agrees is
+                    free; the final descent onto it and the lift back off are
+                    open-loop, because a thing you intend to grasp is exactly
+                    a thing the map calls an obstacle. Keep them short.
         watch       volumes to report voxel counts for (see WatchBox).
         motions     name -> dict describing how an unmapped body moves. The
                     client decides how to interpret its own entries; the server
@@ -83,6 +98,8 @@ class SceneSpec:
     cameras: Dict[str, dict]
     mapper: dict
     unmapped: List[Body] = field(default_factory=list)
+    payload: List[Payload] = field(default_factory=list)
+    pick: dict = field(default_factory=dict)
     watch: List[WatchBox] = field(default_factory=list)
     motions: Dict[str, dict] = field(default_factory=dict)
 
@@ -100,10 +117,18 @@ class SceneSpec:
         for t in self.targets:
             if len(t) != 7:
                 raise ValueError(f"target {t} is not [x,y,z,qw,qx,qy,qz]")
+        if self.payload and not self.pick:
+            raise ValueError("a scene with a payload needs pick={'descend_m':..., "
+                             "'lift_m':...}; the planner cannot route the last "
+                             "few centimetres onto something it maps as an obstacle")
+        for name, dims, pose, _, mass in self.payload:
+            if mass <= 0:
+                raise ValueError(f"payload {name!r} needs a positive mass, got {mass}")
 
     def body(self, name: str) -> Optional[Body]:
-        """Look up an obstacle or unmapped body by name."""
-        for b in list(self.obstacles) + list(self.unmapped):
+        """Look up an obstacle, unmapped body or payload by name."""
+        for b in list(self.obstacles) + list(self.unmapped) + \
+                [p[:4] for p in self.payload]:
             if b[0] == name:
                 return b
         return None

@@ -270,6 +270,45 @@ Three things that bite:
   the gripper stranded at +0.334 rad when the next plan started. Sized from
   the limit it returns to +0.001..+0.017 rad every cycle.
 
+### The 4-bar is closed in USD, not in the URDF
+
+URDF is a tree, so the loop that makes a 4-bar a 4-bar cannot be written in
+one: the inner knuckle hangs off the base as its own branch with nothing tying
+it to the finger. Driven open-loop it fights whatever it touches, and measured
+while gripping a 45 mm block the branches stalled 0.22 rad apart within one
+side — the linkage visibly comes apart at the moment it grips, which is when
+anyone looking at it notices.
+
+**USD is not a tree.** `close_gripper_linkage()` adds a `UsdPhysics.
+RevoluteJoint` after import, pinning each inner knuckle to its inner finger,
+and the mechanism sets the knuckle's angle the way it does on the real gripper.
+The knuckles are then not driven at all; only the load-bearing chain is.
+
+The anchors are derived, not guessed: at angle 0 the two links are in their
+correct relative pose, so their closest surface points — 4.66 mm apart — are
+where the pin goes. Both sides produce identical local coordinates, which is
+the check that the derivation is right.
+
+| gripping a 45 mm block | open-loop | pinned |
+|---|---|---|
+| outer vs inner knuckle, same side | 0.142 rad | **0.059** |
+| left vs right asymmetry | 0.043 rad | **0.012** |
+| block slip over a 0.125 m lift | 5 mm | **1 mm** |
+
+HANDOVER warned that PhysX handles this mechanism badly. On this one it does
+not: no jitter, no constraint blow-up, and the grasp got *better*. The residual
+0.059 rad is the pin being an ideal hinge where the real linkage has
+millimetre-scale slop in link lengths.
+
+Three things were tried first and are recorded so nobody repeats them:
+commanding the followers from the leader's **measured** angle made the
+left/right spread **worse** (0.146 → 0.297 rad, because a follower commanded
+to the leader's position still cannot get there — contact stops it, not the
+command); taking the knuckles out of collision fixed the left/right symmetry
+but left 0.22 rad within one side; and `set_joint_positions` to place them
+kinematically resets the whole articulation, leaving the arm stuck at its spawn
+pose even when only two indices are written.
+
 **Checking the planner is not checking the simulator.** cuRobo resolves the
 coupling itself and never goes near PhysX, so throughout the broken-linkage
 episode it reported a perfectly correct gripper — spheres moving 48.5 mm over
@@ -281,8 +320,28 @@ commanded move, and cuRobo's spheres.
 The articulation has 12 DOF where the planner has 6, so the demo addresses the
 two sets by joint index rather than reindexing whole arrays.
 
-Actuation is geometric only: no grasping. `DRAG_CUBE` is a `VisualCuboid` with
-no physics, so there is nothing to pick up yet.
+### Grasping
+
+`scenes/pick_place.py` shuttles a 150 g block between two pedestals. The scene
+contract gained `payload` — a rigid body with mass, distinct from `unmapped`,
+which is visual-only and meant to be avoided.
+
+**The thing you intend to grasp is, to the map, an obstacle**, and `plan_pose`
+will not route a tool into one. So the plan goes to a pose ABOVE the block and
+the last stretch is solved by IK and interpolated. That needs a **second IK
+solver built with no collision checker** — the planner's own is collision-aware
+and refuses the descent every time, which showed up as the arm shuttling to the
+pre-grasp pose and stopping, over and over, with `no IK for z-0.125 m` the only
+clue in the log.
+
+The trade is explicit: nothing checks the approach. It is short, vertical, and
+seeded from directly above, which is what makes that acceptable and would not
+make it acceptable for a long move.
+
+A deliberately wrong alternative, measured before it was discarded:
+approximating the descent as shoulder_lift and elbow moving oppositely gives
+`dz/dq = -0.11 m/rad` and `dx/dq = -0.40` — mostly horizontal, and the opposite
+sign to the guess it replaced.
 
 ### Historical: why the fingers used to be rigid
 

@@ -56,11 +56,12 @@ simulation_app = SimulationApp({"headless": False, "width": 1600, "height": 900}
 
 import numpy as np  # noqa: E402
 import omni.kit.commands  # noqa: E402
-from pxr import PhysxSchema, UsdGeom, UsdLux  # noqa: E402
+from pxr import Gf, PhysxSchema, UsdGeom, UsdLux, UsdPhysics, UsdShade  # noqa: E402
 
 from isaacsim.asset.importer.urdf._urdf import UrdfJointTargetType  # noqa: E402
 from isaacsim.core.api import World  # noqa: E402
-from isaacsim.core.api.objects import FixedCuboid, VisualCuboid  # noqa: E402
+from isaacsim.core.api.materials import PhysicsMaterial  # noqa: E402
+from isaacsim.core.api.objects import DynamicCuboid, FixedCuboid, VisualCuboid  # noqa: E402
 from isaacsim.core.prims import SingleArticulation  # noqa: E402
 from isaacsim.core.utils.types import ArticulationAction  # noqa: E402
 from isaacsim.core.utils.viewports import set_camera_view  # noqa: E402
@@ -123,6 +124,14 @@ class Planner:
             )
         return header
 
+    def ik(self, q, target):
+        """Joint angles for one tool pose, or None. See planner_server.handle_ik."""
+        send_msg(self.sock, {"op": "ik", "q": list(map(float, q)), "target": target})
+        header, payload = recv_msg(self.sock)
+        if not header.get("ok"):
+            return None
+        return np.frombuffer(payload, dtype=np.float32).tolist()
+
     def map_frame(self, q, depth, K, cam_name):
         send_msg(
             self.sock,
@@ -139,6 +148,53 @@ class Planner:
         # Fire-and-forget: the sim must not stall on a round-trip, so there is
         # no reply to return. The server's own frame count is only visible in
         # its log.
+
+
+# The 2F-85 is two mirrored 4-bar linkages. A 4-bar needs a loop closure, and
+# URDF is a tree, so in the model the inner knuckle hangs off the base as its
+# own branch with nothing tying it to the finger. Under load the branches stall
+# at different angles -- measured 0.22 rad apart within one side while gripping
+# -- and the linkage visibly comes apart.
+#
+# USD is not a tree, so the pin can be added back here. Anchors derived from
+# the geometry: at angle 0 the two links sit in their correct relative pose,
+# and their closest surface points (4.66 mm apart) are where the real pin goes.
+# Identical on both sides, which is a good sign the derivation is right.
+GRIPPER_PIN = {
+    "knuckle": (0.00975, 0.03997, 0.04804),
+    "finger": (0.00975, -0.01553, 0.01156),
+}
+
+
+def close_gripper_linkage(stage, prim_path):
+    """Pin each inner knuckle to its inner finger, closing the 4-bar in PhysX.
+
+    Without this the knuckle is driven open-loop and fights whatever it
+    touches. With it, the knuckle's angle comes from the mechanism, which is
+    where it comes from on the real gripper.
+    """
+    made = []
+    for side in ("left", "right"):
+        k = stage.GetPrimAtPath(f"{prim_path}/{side}_inner_knuckle")
+        f = stage.GetPrimAtPath(f"{prim_path}/{side}_inner_finger")
+        if not (k.IsValid() and f.IsValid()):
+            print(f"[demo] cannot pin {side} linkage: link prim missing")
+            continue
+        path = f"{prim_path}/joints/{side}_linkage_pin"
+        j = UsdPhysics.RevoluteJoint.Define(stage, path)
+        j.CreateBody0Rel().SetTargets([k.GetPath()])
+        j.CreateBody1Rel().SetTargets([f.GetPath()])
+        j.CreateLocalPos0Attr().Set(Gf.Vec3f(*GRIPPER_PIN["knuckle"]))
+        j.CreateLocalPos1Attr().Set(Gf.Vec3f(*GRIPPER_PIN["finger"]))
+        # Planar mechanism: the pin turns about the same X the other gripper
+        # joints do. Leaving the limits off keeps it a free hinge.
+        j.CreateAxisAttr().Set("X")
+        j.CreateExcludeFromArticulationAttr().Set(True)
+        made.append(side)
+    if made:
+        print(f"[demo] 4-bar closed: pinned {', '.join(made)} inner knuckle "
+              f"to inner finger")
+    return made
 
 
 def build_stage(world):
@@ -202,10 +258,39 @@ def build_stage(world):
             color=np.array(colour),
         )
 
+    close_gripper_linkage(world.stage, prim_path)
+
+    # Payloads. Real rigid bodies, unlike everything above: they fall, they can
+    # be squeezed, and they come away when the gripper closes. High friction on
+    # both the block and the finger pads is what makes a position-driven
+    # gripper hold rather than extrude what it is squeezing.
+    payload = {}
+    if SCENE.payload:
+        grip_mat = PhysicsMaterial(prim_path="/World/physics/grip",
+                                   static_friction=1.2, dynamic_friction=1.1,
+                                   restitution=0.0)
+        for name, dims, pose, colour, mass in SCENE.payload:
+            cube = DynamicCuboid(
+                prim_path=f"/World/{name}",
+                name=name,
+                position=np.array(pose[:3]),
+                scale=np.array(dims),
+                color=np.array(colour),
+                mass=mass,
+            )
+            cube.apply_physics_material(grip_mat)
+            payload[name] = cube
+        for link in ("left_inner_finger_pad", "right_inner_finger_pad"):
+            p = world.stage.GetPrimAtPath(f"{prim_path}/{link}/collisions")
+            if p.IsValid():
+                UsdShade.MaterialBindingAPI(p).Bind(
+                    UsdShade.Material(world.stage.GetPrimAtPath("/World/physics/grip")),
+                    UsdShade.Tokens.weakerThanDescendants, "physics")
+
     light = UsdLux.DistantLight.Define(world.stage, "/World/DistantLight")
     light.CreateIntensityAttr(2500)
     light.CreateAngleAttr(1.0)
-    return prim_path, bodies
+    return prim_path, bodies, payload
 
 
 _DRAW = _debug_draw.acquire_debug_draw_interface()
@@ -444,7 +529,7 @@ def main():
     planner = Planner()
 
     world = World(physics_dt=SIM_DT, rendering_dt=SIM_DT, stage_units_in_meters=1.0)
-    prim_path, bodies = build_stage(world)
+    prim_path, bodies, payload = build_stage(world)
     set_camera_view(eye=[2.0, 1.6, 1.4], target=[0.35, 0.0, 0.35])
 
     robot = SingleArticulation(prim_path=prim_path, name="ur5e")
@@ -491,7 +576,11 @@ def main():
     # Worth remembering that cuRobo showed a perfectly correct gripper
     # throughout, because it resolves this itself and never goes near PhysX.
     # Checking the planner's collision spheres is not checking the simulator.
-    coupling = {j: m for j, m in GRIPPER_COUPLING.items() if j in sim_names}
+    # The inner knuckles are NOT driven: close_gripper_linkage pins them to
+    # their finger, so the mechanism sets their angle the way it does on the
+    # real gripper. Driving them as well would fight that pin.
+    coupling = {j: m for j, m in GRIPPER_COUPLING.items()
+                if j in sim_names and "inner_knuckle" not in j}
     grip_idx_all = np.array([sim_names.index(j) for j in coupling])
     grip_mult = np.array(list(coupling.values()), dtype=np.float32)
 
@@ -501,9 +590,9 @@ def main():
     if grip_idx is None:
         print("[demo] no gripper joint to drive")
     else:
-        print(f"[demo] gripper: {len(coupling)} joints driven explicitly, "
-              f"{grip_open} open .. {grip_closed} closed "
-              f"(no <mimic>; PhysX rejects it)")
+        print(f"[demo] gripper: {len(coupling)} load-bearing joints driven, "
+              f"{grip_open} open .. {grip_closed} closed; "
+              f"inner knuckles set by the pinned 4-bar")
 
     def command_arm(q_curobo):
         """Send one planner-ordered joint vector, touching nothing else."""
@@ -512,7 +601,18 @@ def main():
             joint_indices=np.asarray(arm_idx)))
 
     def command_gripper(angle):
-        """One commanded angle -> every joint of the linkage."""
+        """One commanded angle -> every joint of the linkage.
+
+        Open-loop on purpose. Slaving the followers to the leader's MEASURED
+        angle was tried and measured worse: under load the left/right spread
+        went from 0.146 to 0.297 rad, because a follower commanded to the
+        leader's position still cannot get there -- its own contact is what
+        stops it, not its command.
+
+        The linkage visibly separates while gripping, by up to 0.22 rad within
+        one side. See HANDOVER section 6: a 4-bar needs a loop closure URDF
+        cannot express, and six independent position drives is not it.
+        """
         if not len(grip_idx_all):
             return
         robot.apply_action(ArticulationAction(
@@ -619,7 +719,101 @@ def main():
         simulation_app.close()
         return
 
+    def move_tool_z(pose, dz, n_steps):
+        """Put the tool at `pose` shifted by dz in z, by IK then interpolation.
+
+        plan_pose is no use here: the block is in the map, and the planner will
+        not route a tool into an obstacle. Asking for IK at the end pose keeps
+        both ENDPOINTS exact and only the path between them unchecked -- which
+        over 12 cm of vertical move is acceptable, and over a long one would
+        not be.
+
+        Returns False if IK found nothing, rather than moving somewhere wrong.
+        """
+        goal = list(pose)
+        goal[2] += dz
+        q_goal = planner.ik(q_now(), goal)
+        if q_goal is None:
+            print(f"[demo]   no IK for z{dz:+.3f} m; skipping")
+            return False
+        start = q_now()
+        for i in range(n_steps):
+            if not simulation_app.is_running():
+                return False
+            blend = (i + 1) / n_steps
+            command_arm([a + (b - a) * blend for a, b in zip(start, q_goal)])
+            world.step(render=True)
+        return True
+
+    def hold_still(n):
+        for _ in range(n):
+            if not simulation_app.is_running():
+                return
+            world.step(render=True)
+
+    def pick_place_cycle(plan_no, src, dst):
+        """Lift the block off `src` and set it down on `dst`.
+
+        Called with src and dst swapped each time, so the block shuttles back
+        and forth rather than being picked once and abandoned.
+        """
+        for idx, grab in ((src, True), (dst, False)):
+            what = f"pick@{idx}" if grab else f"place@{idx}"
+            res = planner.plan(q_now(), SCENE.targets[idx])
+            if not res.get("ok"):
+                print(f"[demo] plan #{plan_no} ({what}) blocked - waiting")
+                hold_still(30)
+                return False
+            print(f"[demo] plan #{plan_no} -> {what}: solve "
+                  f"{res['solve_ms']:.0f} ms, {len(res['traj'])} waypoints")
+            for k, wp in enumerate(res["traj"]):
+                if not simulation_app.is_running():
+                    return False
+                command_arm(wp)
+                world.step(render=True)
+                q_history.append(q_now())
+                # Keep the map fed during the long legs, the same way the
+                # avoidance loop does. Without this the slab decays out of the
+                # map between grasps and the next plan drives through it.
+                if cams and k % ARGS.map_every == 0:
+                    fuse()
+            hold_still(20)
+
+            if not move_tool_z(SCENE.targets[idx], -SCENE.pick["descend_m"], 70):
+                return False
+            hold_still(15)
+            stroke = int(abs(grip_closed - grip_open) / GRIPPER_RAD_PER_S / SIM_DT) + 6
+            for i in range(stroke):
+                command_gripper(grip_open + (grip_closed - grip_open) *
+                                ((i + 1) / stroke if grab else 1 - (i + 1) / stroke))
+                world.step(render=True)
+            hold_still(20)
+            lifted = list(SCENE.targets[idx])
+            lifted[2] += SCENE.pick["lift_m"] - SCENE.pick["descend_m"]
+            move_tool_z(lifted, 0.0, 70)
+            hold_still(20)
+
+            for name, cube in payload.items():
+                pos = cube.get_world_pose()[0]
+                print(f"[demo]   after {what}: {name} at "
+                      f"[{pos[0]:+.3f} {pos[1]:+.3f} {pos[2]:+.3f}]")
+        return True
+
     target_idx, plan_no, steps = 0, 0, 0
+    if payload:
+        print(f"[demo] pick-and-place: {list(payload)} shuttling between "
+              f"{len(SCENE.targets)} pedestals, descend "
+              f"{SCENE.pick['descend_m']:.3f} m / lift {SCENE.pick['lift_m']:.3f} m "
+              f"by IK, the rest planned")
+        src, dst = 0, 1
+        while simulation_app.is_running():
+            plan_no += 1
+            if pick_place_cycle(plan_no, src, dst):
+                src, dst = dst, src      # next time, bring it back
+
+        simulation_app.close()
+        return
+
     while simulation_app.is_running():
         result = planner.plan(q_now(), SCENE.targets[target_idx])
         plan_no += 1
