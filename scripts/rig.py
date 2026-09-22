@@ -11,8 +11,8 @@ anything both sides import has to stay neutral.
 
 SIM_DT = 1.0 / 60.0
 
-# Selectable robots. Both are 6-DOF: the 2F-85's fingers are rigid collision
-# geometry, not actuated joints, so the gripper adds reach and bulk but no DOF.
+# Selectable robots. Both are 6-DOF: the 2F-85's fingers are locked out of the
+# cspace, so the gripper adds reach and bulk but no DOF.
 #
 # tool_frame is the frame plan_pose is given a goal for. Every OTHER frame in
 # the config's tool_frames (camera_link, for instance) is still available for
@@ -25,46 +25,38 @@ SIM_DT = 1.0 / 60.0
 # collision spheres) but does not plan them. The simulator drives them on its
 # own channel.
 ROBOTS = {
+    # UR5 (CB3) with the real wrist stack: FT 300, Robotiq Wrist Camera, 2F-85
+    # and a RealSense D435i on its bracket. The whole description is vendored
+    # from eugene900805/mir_ur5_humble with the MiR chassis removed -- see
+    # assets/robot/ur5_robotiq/PROVENANCE.md. It replaces a model that was
+    # assembled here by hand from photographs, whose link positions were wrong.
+    "ur5_robotiq": {
+        "config": "configs/ur5_robotiq.yml",
+        "urdf": "assets/robot/ur5_robotiq/ur5_robotiq.urdf",
+        "assets": "assets/robot/ur5_robotiq",
+        "tool_frame": "grasp_frame",
+        "gripper_joints": {
+            "robotiq_85_left_knuckle_joint": 1.0,
+            "robotiq_85_right_knuckle_joint": -1.0,
+            "robotiq_85_left_inner_knuckle_joint": 1.0,
+            "robotiq_85_right_inner_knuckle_joint": -1.0,
+            "robotiq_85_left_finger_tip_joint": -1.0,
+            "robotiq_85_right_finger_tip_joint": 1.0,
+        },
+        "gripper_open": 0.0,
+        "gripper_closed": 0.8,
+    },
+    # The bare arm, with cuRobo's own shipped config. Kept as the
+    # no-gripper option and as the reference its cspace weights come from --
+    # it is a UR5e, not the CB3 above, so its GEOMETRY is not transferable.
     "ur5e": {
         "config": "configs/ur5e.yml",
         "urdf": "assets/robot/ur_description/ur5e.urdf",
         "tool_frame": "tool0",
-        "gripper_joint": None,
-    },
-    "ur5e_2f85": {
-        "config": "configs/ur5e_robotiq_2f_85.yml",
-        "urdf": "assets/robot/ur_description/ur5e_robotiq_2f_85.urdf",
-        "tool_frame": "grasp_frame",
-        # The 2F-85 linkage, as multipliers of one commanded angle.
-        #
-        # This is the single source for it, NOT the URDF. A <mimic> tag would
-        # be the obvious place, and cuRobo honours them -- but PhysX refuses to
-        # build the constraint ("needs a finite limit set to be used by the
-        # mimic joint feature", though the URDF gives every one of them
-        # lower="0" upper="0.8757") and the failure takes the whole
-        # articulation with it: the fingers come apart on screen. Both sides
-        # therefore derive what they need from here instead. See HANDOVER
-        # section 6.
-        #
-        # The real mechanism is two mirrored 4-bar linkages, which need a loop
-        # closure URDF cannot express; these multipliers are the same
-        # approximation every Robotiq ROS package makes.
-        "gripper_joints": {
-            "left_outer_knuckle_joint": 1.0,
-            "right_outer_knuckle_joint": 1.0,
-            "left_inner_knuckle_joint": 1.0,
-            "right_inner_knuckle_joint": 1.0,
-            "left_inner_finger_joint": -1.0,
-            "right_inner_finger_joint": -1.0,
-        },
-        # 0 rad fully open, 0.8 fully closed. The config locks the linkage at
-        # OPEN, the widest the gripper gets, so a path planned there stays
-        # clear at any opening.
-        "gripper_open": 0.0,
-        "gripper_closed": 0.8,
+        "gripper_joints": None,
     },
 }
-DEFAULT_ROBOT = "ur5e"
+DEFAULT_ROBOT = "ur5_robotiq"
 
 # The planner service. Both processes must agree; a stale server holding this
 # port is the classic confusing failure (see HANDOVER section 3).

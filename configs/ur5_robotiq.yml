@@ -1,0 +1,395 @@
+robot_cfg:
+  kinematics:
+    add_object_link: false
+    asset_root_path: /media/eencku/2TBDATA/yusian-ubuntu/UR5_curobo/assets/robot/ur5_robotiq
+    base_link: world
+    collision_link_names: &id001 [base_link_inertia, shoulder_link, upper_arm_link,
+      forearm_link, wrist_1_link, wrist_2_link, wrist_3_link, robotiq_ft300_mounting_plate,
+      robotiq_ft300_sensor, robotiq_wrist_camera_link, camera_mount, realsense_link,
+      robotiq_85_base_link, robotiq_85_left_knuckle_link, robotiq_85_right_knuckle_link,
+      robotiq_85_left_finger_link, robotiq_85_right_finger_link, robotiq_85_left_inner_knuckle_link,
+      robotiq_85_right_inner_knuckle_link, robotiq_85_left_finger_tip_link, robotiq_85_right_finger_tip_link]
+    collision_sphere_buffer: 0.0
+    collision_spheres:
+      base_link_inertia:
+      - center: [0.0038888973649591208, -0.05490954965353012, 0.012132378295063972]
+        radius: 0.029006529599428177
+      - center: [-0.03189799189567566, 0.04294632375240326, 0.013414479792118073]
+        radius: 0.027519213035702705
+      - center: [0.04859653487801552, -0.020969294011592865, 0.012697950936853886]
+        radius: 0.033648040145635605
+      - center: [-0.005000484175980091, -0.00487870816141367, 0.012421024031937122]
+        radius: 0.021858440712094307
+      - center: [0.000524271628819406, 0.08659934252500534, 0.008373882621526718]
+        radius: 0.019661974161863327
+      - center: [0.03298080340027809, 0.03300091624259949, 0.010871821083128452]
+        radius: 0.03800687566399574
+      - center: [-0.039802856743335724, -0.03890393674373627, 0.012243826873600483]
+        radius: 0.02502257376909256
+      - center: [-0.05409727990627289, 0.0027228377293795347, 0.01144496351480484]
+        radius: 0.0271132979542017
+      camera_mount:
+      - center: [0.06891830265522003, 0.01844230480492115, 0.11662834882736206]
+        radius: 0.023997215554118156
+      - center: [0.02573484554886818, 0.016546349972486496, 0.08137714862823486]
+        radius: 0.02250136062502861
+      - center: [0.03074830025434494, 0.017900435253977776, 0.11797352135181427]
+        radius: 0.02413978800177574
+      - center: [0.047183360904455185, 0.020052513107657433, 0.05694591626524925]
+        radius: 0.0182892344892025
+      - center: [0.04867558181285858, 0.017638491466641426, 0.11867833882570267]
+        radius: 0.022566383704543114
+      - center: [0.07003345340490341, 0.017830125987529755, 0.08824662864208221]
+        radius: 0.018873881548643112
+      - center: [0.08512359857559204, 0.010517287068068981, 0.08679395169019699]
+        radius: 0.011351640336215496
+      - center: [0.06639820337295532, 0.025319550186395645, 0.03914625197649002]
+        radius: 0.01827259361743927
+      - center: [0.033081673085689545, 0.026708783581852913, 0.026408439502120018]
+        radius: 0.017424920573830605
+      - center: [0.050717733800411224, 0.016539495438337326, 0.08420739322900772]
+        radius: 0.02224869281053543
+      - center: [0.024526121094822884, 0.02269659750163555, 0.052851442247629166]
+        radius: 0.015510832890868187
+      - center: [0.07144395262002945, 0.01920511946082115, 0.06518984586000443]
+        radius: 0.01960212178528309
+      - center: [0.09107572585344315, 0.00727211544290185, 0.10533510148525238]
+        radius: 0.00921652652323246
+      - center: [0.010988728143274784, 0.007897020317614079, 0.10316044837236404]
+        radius: 0.012577186338603497
+      - center: [0.04194120690226555, 0.02867881953716278, 0.007132248021662235]
+        radius: 0.00934810284525156
+      - center: [0.06318487226963043, 0.027392279356718063, 0.012894776649773121]
+        radius: 0.01348121091723442
+      forearm_link:
+      - center: [0.009321503341197968, 0.04190630838274956, 0.05532059818506241]
+        radius: 0.018793944269418716
+      - center: [0.018252216279506683, -0.009693055413663387, 0.03897319734096527]
+        radius: 0.04655066132545471
+      - center: [-0.3916614055633545, -0.00023680222511757165, -0.005160655360668898]
+        radius: 0.04269857332110405
+      - center: [-0.3890775740146637, -6.822094292147085e-05, 0.02578364498913288]
+        radius: 0.04858141392469406
+      - center: [-0.02375282160937786, -0.0030214700382202864, 0.02790861576795578]
+        radius: 0.0613519623875618
+      - center: [-0.1675807237625122, -0.0005252729170024395, 0.01770385354757309]
+        radius: 0.044909149408340454
+      - center: [-0.30925342440605164, -0.00046058205771259964, 0.016122212633490562]
+        radius: 0.046359919011592865
+      - center: [-0.10124867409467697, 0.00020089279860258102, 0.016199195757508278]
+        radius: 0.039860356599092484
+      - center: [-0.2360229790210724, 0.0007688268669880927, 0.016494613140821457]
+        radius: 0.04467390850186348
+      realsense_link:
+      - center: [0.0005700438632629812, -0.04896533489227295, 0.0005541113787330687]
+        radius: 0.019768593832850456
+      - center: [-0.0004698473203461617, -0.019387712702155113, 8.02893700893037e-05]
+        radius: 0.01856417953968048
+      - center: [-7.269896741490811e-05, 0.011827887035906315, 0.001063125324435532]
+        radius: 0.020252414047718048
+      robotiq_85_base_link:
+      - center: [0.000599418708588928, -0.0007786313653923571, 0.03183360770344734]
+        radius: 0.04676856845617294
+      - center: [0.012874583713710308, -0.0010857152519747615, 0.07565933465957642]
+        radius: 0.0164189450442791
+      - center: [-0.013613684102892876, -0.0010448344983160496, 0.07636481523513794]
+        radius: 0.01654585637152195
+      robotiq_85_left_finger_link:
+      - center: [-0.0012626206735149026, -0.0007076553883962333, 0.0124117536470294]
+        radius: 0.019434239715337753
+      - center: [0.005750051233917475, -0.00072480394737795, 0.03867415711283684]
+        radius: 0.01652451604604721
+      robotiq_85_left_finger_tip_link:
+      - center: [-0.009766163304448128, -0.0007084427634254098, 0.011005858890712261]
+        radius: 0.02015575021505356
+      - center: [-0.019656412303447723, -0.0009877138072624803, 0.036705382168293]
+        radius: 0.01520965900272131
+      robotiq_85_left_inner_knuckle_link:
+      - center: [0.0037526399828493595, 0.010233921930193901, 0.00345825613476336]
+        radius: 0.011789771728217602
+      - center: [0.0019673884380608797, -0.009157509543001652, 0.0034816977567970753]
+        radius: 0.011622508987784386
+      - center: [0.019340943545103073, -2.924484397226479e-05, 0.02093500643968582]
+        radius: 0.018969843164086342
+      - center: [0.03235058858990669, 0.0006828038603998721, 0.03930577635765076]
+        radius: 0.015336471609771252
+      robotiq_85_left_knuckle_link:
+      - center: [0.031456951051950455, 3.538713281159289e-05, -0.0032229511998593807]
+        radius: 0.007171025034040213
+      - center: [0.01991094835102558, 0.0012360099935904145, 0.0012051028897985816]
+        radius: 0.011365007609128952
+      - center: [0.003352442057803273, 0.0003013860550709069, -0.0010422891937196255]
+        radius: 0.01096867024898529
+      robotiq_85_right_finger_link:
+      - center: [0.0009431702201254666, 9.093969856621698e-05, 0.010703240521252155]
+        radius: 0.018701646476984024
+      - center: [-0.00457207765430212, -0.00022694451035931706, 0.039039961993694305]
+        radius: 0.01691691391170025
+      robotiq_85_right_finger_tip_link:
+      - center: [0.010308755561709404, -0.0004151696339249611, 0.008418917655944824]
+        radius: 0.0183672234416008
+      - center: [0.017037274315953255, 0.0004910972784273326, 0.025218667462468147]
+        radius: 0.013193043880164623
+      - center: [0.020029203966259956, 0.00035903562093153596, 0.04098954051733017]
+        radius: 0.011741820722818375
+      robotiq_85_right_inner_knuckle_link:
+      - center: [-0.005835744086652994, -0.008417222648859024, 0.007849437184631824]
+        radius: 0.015445059165358543
+      - center: [-0.00252681877464056, 0.010084886103868484, 0.0018467314075678587]
+        radius: 0.010564289055764675
+      - center: [-0.0295647494494915, -0.001374492421746254, 0.03305341675877571]
+        radius: 0.019697757437825203
+      - center: [-0.014991046860814095, 0.011511540040373802, 0.018265819177031517]
+        radius: 0.00980551540851593
+      robotiq_85_right_knuckle_link:
+      - center: [-0.03191161900758743, -0.0007621366530656815, -0.004498089663684368]
+        radius: 0.007125325035303831
+      - center: [-0.020162535831332207, 0.0012742843246087432, 0.001506378990598023]
+        radius: 0.011734461411833763
+      - center: [-0.001957278000190854, -0.0005649445811286569, -0.0005901490803807974]
+        radius: 0.010950973257422447
+      robotiq_ft300_mounting_plate:
+      - center: [0.0, 0.0, 0.0065]
+        radius: 0.016
+      - center: [0.0245, 0.0, 0.0065]
+        radius: 0.016
+      - center: [0.017324116139070415, 0.017324116139070412, 0.0065]
+        radius: 0.016
+      - center: [1.5001923289555078e-18, 0.0245, 0.0065]
+        radius: 0.016
+      - center: [-0.017324116139070412, 0.017324116139070415, 0.0065]
+        radius: 0.016
+      - center: [-0.0245, 3.0003846579110156e-18, 0.0065]
+        radius: 0.016
+      - center: [-0.01732411613907042, -0.017324116139070412, 0.0065]
+        radius: 0.016
+      - center: [-4.500576986866523e-18, -0.0245, 0.0065]
+        radius: 0.016
+      - center: [0.017324116139070412, -0.01732411613907042, 0.0065]
+        radius: 0.016
+      robotiq_ft300_sensor:
+      - center: [0.017521340399980545, -0.009019773453474045, -0.016797281801700592]
+        radius: 0.024943310767412186
+      - center: [-0.001472687115892768, -0.019421186298131943, -0.017375484108924866]
+        radius: 0.026223599910736084
+      - center: [-0.032519709318876266, 0.014080051332712173, -0.0019374690018594265]
+        radius: 0.0019962063524872065
+      - center: [-0.008786204271018505, 0.018392765894532204, -0.01747944764792919]
+        radius: 0.024700697511434555
+      - center: [-0.019818304106593132, -0.005146177019923925, -0.016855871304869652]
+        radius: 0.024908384308218956
+      - center: [0.014568380080163479, 0.014387959614396095, -0.017334070056676865]
+        radius: 0.025159494951367378
+      robotiq_wrist_camera_link:
+      - center: [-0.02174905501306057, 0.006396848242729902, 0.0066905999556183815]
+        radius: 0.01812448352575302
+      - center: [0.0059240697883069515, -0.023506667464971542, 0.007247042376548052]
+        radius: 0.019000044092535973
+      - center: [0.004291095770895481, 0.005438934080302715, 0.0069694723933935165]
+        radius: 0.0091044120490551
+      - center: [0.02895599976181984, -0.0033696067985147238, 0.007753470446914434]
+        radius: 0.016920072957873344
+      - center: [0.012511255219578743, 0.03174478933215141, 0.005908242426812649]
+        radius: 0.02142101526260376
+      - center: [-0.011240779422223568, 0.037522777915000916, 0.0061917370185256]
+        radius: 0.01717805676162243
+      - center: [-0.022577360272407532, -0.019616853445768356, 0.006940245162695646]
+        radius: 0.012736612930893898
+      shoulder_link:
+      - center: [-0.00114118040073663, -0.010478165931999683, -0.004055707715451717]
+        radius: 0.08038144558668137
+      upper_arm_link:
+      - center: [0.012539433315396309, 0.04481954127550125, 0.18941529095172882]
+        radius: 0.0066553810611367226
+      - center: [-0.0018606511875987053, -0.000313459022436291, 0.13039381802082062]
+        radius: 0.07672178000211716
+      - center: [-0.36706504225730896, -0.0015828064642846584, 0.13799209892749786]
+        radius: 0.05714454874396324
+      - center: [-0.42255857586860657, 0.0006353313219733536, 0.13164840638637543]
+        radius: 0.0788908451795578
+      - center: [-0.2883191704750061, -0.00033512047957628965, 0.1350133717060089]
+        radius: 0.05417526885867119
+      - center: [-0.14667098224163055, -0.00025442824698984623, 0.13552294671535492]
+        radius: 0.054852407425642014
+      - center: [-0.05328913405537605, 0.0005234011332504451, 0.1389511525630951]
+        radius: 0.06612703204154968
+      - center: [-0.2158854454755783, -6.433237285818905e-05, 0.13633359968662262]
+        radius: 0.052896566689014435
+      wrist_1_link:
+      - center: [0.0002866758150048554, 0.01808144710958004, -0.007028288207948208]
+        radius: 0.048552293330430984
+      - center: [0.0005553880473598838, -0.01158883422613144, -0.003539958270266652]
+        radius: 0.0489729568362236
+      wrist_2_link:
+      - center: [0.0008470049942843616, 0.010230246931314468, -0.005331879481673241]
+        radius: 0.05063045397400856
+      - center: [0.0017702992772683501, -0.022521106526255608, -0.003539567580446601]
+        radius: 0.04506750404834747
+      wrist_3_link:
+      - center: [-0.007408596575260162, -0.020715802907943726, -0.018680311739444733]
+        radius: 0.022108549252152443
+      - center: [0.015588795766234398, -0.01428717840462923, -0.01807178370654583]
+        radius: 0.021012598648667336
+      - center: [-0.018787244334816933, 0.0034708818420767784, -0.017590925097465515]
+        radius: 0.02645733766257763
+      - center: [0.02151668258011341, 0.005585073493421078, -0.019998660311102867]
+        radius: 0.021892553195357323
+      - center: [0.001484178239479661, 0.021820979192852974, -0.01857060194015503]
+        radius: 0.023164065554738045
+    cspace:
+      acceleration_scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      cspace_distance_weight: [1.0, 1.0, 1.0, 1.5, 1.5, 1.5]
+      default_joint_position: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      jerk_scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      joint_names: [shoulder_pan_joint, shoulder_lift_joint, elbow_joint, wrist_1_joint,
+        wrist_2_joint, wrist_3_joint]
+      max_acceleration: 12.0
+      max_jerk: 500.0
+      null_space_maximum_distance: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      null_space_weight: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      position_limit_clip: 0.1
+      velocity_scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    debug: null
+    external_asset_path: null
+    external_robot_configs_path: null
+    extra_collision_spheres: null
+    extra_links: {}
+    format_version: 2.0
+    grasp_contact_link_names: null
+    load_meshes: false
+    load_tool_frames_with_mesh: false
+    lock_joints: {robotiq_85_left_knuckle_joint: 0.0, robotiq_85_right_knuckle_joint: -0.0,
+      robotiq_85_left_inner_knuckle_joint: 0.0, robotiq_85_right_inner_knuckle_joint: -0.0,
+      robotiq_85_left_finger_tip_joint: -0.0, robotiq_85_right_finger_tip_joint: 0.0}
+    mesh_link_names: *id001
+    self_collision_buffer: {base_link_inertia: 0.0, camera_mount: 0.0, forearm_link: 0.0,
+      realsense_link: 0.0, robotiq_85_base_link: 0.0, robotiq_85_left_finger_link: 0.0,
+      robotiq_85_left_finger_tip_link: 0.0, robotiq_85_left_inner_knuckle_link: 0.0,
+      robotiq_85_left_knuckle_link: 0.0, robotiq_85_right_finger_link: 0.0, robotiq_85_right_finger_tip_link: 0.0,
+      robotiq_85_right_inner_knuckle_link: 0.0, robotiq_85_right_knuckle_link: 0.0,
+      robotiq_ft300_mounting_plate: 0.0, robotiq_ft300_sensor: 0.0, robotiq_wrist_camera_link: 0.0,
+      shoulder_link: 0.0, upper_arm_link: 0.0, wrist_1_link: 0.0, wrist_2_link: 0.0,
+      wrist_3_link: 0.0}
+    self_collision_ignore:
+      base: [base_link]
+      base_link: [world, base_link_inertia, base]
+      base_link_inertia: [base_link, shoulder_link]
+      camera_link: [realsense_color_optical_frame]
+      camera_mount: [d435i_mount_frame, realsense_link, robotiq_85_base_link, robotiq_85_left_finger_link,
+        robotiq_85_left_finger_tip_link, robotiq_85_left_inner_knuckle_link, robotiq_85_left_knuckle_link,
+        robotiq_85_right_finger_link, robotiq_85_right_finger_tip_link, robotiq_85_right_inner_knuckle_link,
+        robotiq_85_right_knuckle_link, robotiq_ft300_mounting_plate, robotiq_ft300_sensor,
+        robotiq_wrist_camera_link, wrist_3_link]
+      d435i_mount_frame: [robotiq_wrist_camera_tool_link, camera_mount, realsense_bottom_screw_frame]
+      flange: [wrist_3_link, tool0]
+      forearm_link: [upper_arm_link, wrist_1_link]
+      ft_frame: [wrist_3_link]
+      grasp_frame: [robotiq_85_base_link]
+      realsense_accel_frame: [realsense_link, realsense_accel_optical_frame]
+      realsense_accel_optical_frame: [realsense_accel_frame]
+      realsense_bottom_screw_frame: [d435i_mount_frame, realsense_link]
+      realsense_color_frame: [realsense_link, realsense_color_optical_frame]
+      realsense_color_optical_frame: [realsense_color_frame, camera_link]
+      realsense_depth_frame: [realsense_link, realsense_depth_optical_frame]
+      realsense_depth_optical_frame: [realsense_depth_frame]
+      realsense_gyro_frame: [realsense_link, realsense_gyro_optical_frame]
+      realsense_gyro_optical_frame: [realsense_gyro_frame]
+      realsense_infra1_frame: [realsense_link, realsense_infra1_optical_frame]
+      realsense_infra1_optical_frame: [realsense_infra1_frame]
+      realsense_infra2_frame: [realsense_link, realsense_infra2_optical_frame]
+      realsense_infra2_optical_frame: [realsense_infra2_frame]
+      realsense_link: [camera_mount, realsense_accel_frame, realsense_bottom_screw_frame,
+        realsense_color_frame, realsense_depth_frame, realsense_gyro_frame, realsense_infra1_frame,
+        realsense_infra2_frame, robotiq_85_base_link, robotiq_85_left_finger_link,
+        robotiq_85_left_finger_tip_link, robotiq_85_left_inner_knuckle_link, robotiq_85_left_knuckle_link,
+        robotiq_85_right_finger_link, robotiq_85_right_finger_tip_link, robotiq_85_right_inner_knuckle_link,
+        robotiq_85_right_knuckle_link, robotiq_ft300_mounting_plate, robotiq_ft300_sensor,
+        robotiq_wrist_camera_link, wrist_3_link]
+      robotiq_85_base_link: [camera_mount, grasp_frame, realsense_link, robotiq_85_left_finger_link,
+        robotiq_85_left_finger_tip_link, robotiq_85_left_inner_knuckle_link, robotiq_85_left_knuckle_link,
+        robotiq_85_right_finger_link, robotiq_85_right_finger_tip_link, robotiq_85_right_inner_knuckle_link,
+        robotiq_85_right_knuckle_link, robotiq_ft300_mounting_plate, robotiq_ft300_sensor,
+        robotiq_wrist_camera_link, robotiq_wrist_camera_tool_link, wrist_3_link]
+      robotiq_85_left_finger_link: [camera_mount, realsense_link, robotiq_85_base_link,
+        robotiq_85_left_finger_tip_link, robotiq_85_left_inner_knuckle_link, robotiq_85_left_knuckle_link,
+        robotiq_85_right_finger_link, robotiq_85_right_finger_tip_link, robotiq_85_right_inner_knuckle_link,
+        robotiq_85_right_knuckle_link, robotiq_ft300_mounting_plate, robotiq_ft300_sensor,
+        robotiq_wrist_camera_link, wrist_3_link]
+      robotiq_85_left_finger_tip_link: [camera_mount, realsense_link, robotiq_85_base_link,
+        robotiq_85_left_finger_link, robotiq_85_left_inner_knuckle_link, robotiq_85_left_knuckle_link,
+        robotiq_85_right_finger_link, robotiq_85_right_finger_tip_link, robotiq_85_right_inner_knuckle_link,
+        robotiq_85_right_knuckle_link, robotiq_ft300_mounting_plate, robotiq_ft300_sensor,
+        robotiq_wrist_camera_link, wrist_3_link]
+      robotiq_85_left_inner_knuckle_link: [camera_mount, realsense_link, robotiq_85_base_link,
+        robotiq_85_left_finger_link, robotiq_85_left_finger_tip_link, robotiq_85_left_knuckle_link,
+        robotiq_85_right_finger_link, robotiq_85_right_finger_tip_link, robotiq_85_right_inner_knuckle_link,
+        robotiq_85_right_knuckle_link, robotiq_ft300_mounting_plate, robotiq_ft300_sensor,
+        robotiq_wrist_camera_link, wrist_3_link]
+      robotiq_85_left_knuckle_link: [camera_mount, realsense_link, robotiq_85_base_link,
+        robotiq_85_left_finger_link, robotiq_85_left_finger_tip_link, robotiq_85_left_inner_knuckle_link,
+        robotiq_85_right_finger_link, robotiq_85_right_finger_tip_link, robotiq_85_right_inner_knuckle_link,
+        robotiq_85_right_knuckle_link, robotiq_ft300_mounting_plate, robotiq_ft300_sensor,
+        robotiq_wrist_camera_link, wrist_3_link]
+      robotiq_85_right_finger_link: [camera_mount, realsense_link, robotiq_85_base_link,
+        robotiq_85_left_finger_link, robotiq_85_left_finger_tip_link, robotiq_85_left_inner_knuckle_link,
+        robotiq_85_left_knuckle_link, robotiq_85_right_finger_tip_link, robotiq_85_right_inner_knuckle_link,
+        robotiq_85_right_knuckle_link, robotiq_ft300_mounting_plate, robotiq_ft300_sensor,
+        robotiq_wrist_camera_link, wrist_3_link]
+      robotiq_85_right_finger_tip_link: [camera_mount, realsense_link, robotiq_85_base_link,
+        robotiq_85_left_finger_link, robotiq_85_left_finger_tip_link, robotiq_85_left_inner_knuckle_link,
+        robotiq_85_left_knuckle_link, robotiq_85_right_finger_link, robotiq_85_right_inner_knuckle_link,
+        robotiq_85_right_knuckle_link, robotiq_ft300_mounting_plate, robotiq_ft300_sensor,
+        robotiq_wrist_camera_link, wrist_3_link]
+      robotiq_85_right_inner_knuckle_link: [camera_mount, realsense_link, robotiq_85_base_link,
+        robotiq_85_left_finger_link, robotiq_85_left_finger_tip_link, robotiq_85_left_inner_knuckle_link,
+        robotiq_85_left_knuckle_link, robotiq_85_right_finger_link, robotiq_85_right_finger_tip_link,
+        robotiq_85_right_knuckle_link, robotiq_ft300_mounting_plate, robotiq_ft300_sensor,
+        robotiq_wrist_camera_link, wrist_3_link]
+      robotiq_85_right_knuckle_link: [camera_mount, realsense_link, robotiq_85_base_link,
+        robotiq_85_left_finger_link, robotiq_85_left_finger_tip_link, robotiq_85_left_inner_knuckle_link,
+        robotiq_85_left_knuckle_link, robotiq_85_right_finger_link, robotiq_85_right_finger_tip_link,
+        robotiq_85_right_inner_knuckle_link, robotiq_ft300_mounting_plate, robotiq_ft300_sensor,
+        robotiq_wrist_camera_link, wrist_3_link]
+      robotiq_ft300_mounting_plate: [camera_mount, realsense_link, robotiq_85_base_link,
+        robotiq_85_left_finger_link, robotiq_85_left_finger_tip_link, robotiq_85_left_inner_knuckle_link,
+        robotiq_85_left_knuckle_link, robotiq_85_right_finger_link, robotiq_85_right_finger_tip_link,
+        robotiq_85_right_inner_knuckle_link, robotiq_85_right_knuckle_link, robotiq_ft300_sensor,
+        robotiq_wrist_camera_link, tool0, wrist_3_link]
+      robotiq_ft300_sensor: [camera_mount, realsense_link, robotiq_85_base_link, robotiq_85_left_finger_link,
+        robotiq_85_left_finger_tip_link, robotiq_85_left_inner_knuckle_link, robotiq_85_left_knuckle_link,
+        robotiq_85_right_finger_link, robotiq_85_right_finger_tip_link, robotiq_85_right_inner_knuckle_link,
+        robotiq_85_right_knuckle_link, robotiq_ft300_mounting_plate, robotiq_ft_frame,
+        robotiq_wrist_camera_link, wrist_3_link]
+      robotiq_ft_frame: [robotiq_ft300_sensor]
+      robotiq_wrist_camera_link: [camera_mount, realsense_link, robotiq_85_base_link,
+        robotiq_85_left_finger_link, robotiq_85_left_finger_tip_link, robotiq_85_left_inner_knuckle_link,
+        robotiq_85_left_knuckle_link, robotiq_85_right_finger_link, robotiq_85_right_finger_tip_link,
+        robotiq_85_right_inner_knuckle_link, robotiq_85_right_knuckle_link, robotiq_ft300_mounting_plate,
+        robotiq_ft300_sensor, robotiq_wrist_camera_optical_frame, robotiq_wrist_camera_tool_link,
+        wrist_3_link]
+      robotiq_wrist_camera_optical_frame: [robotiq_wrist_camera_link]
+      robotiq_wrist_camera_tool_link: [robotiq_wrist_camera_link, d435i_mount_frame,
+        robotiq_85_base_link]
+      shoulder_link: [base_link_inertia, upper_arm_link]
+      tool0: [flange, robotiq_ft300_mounting_plate]
+      upper_arm_link: [shoulder_link, forearm_link]
+      world: [base_link]
+      wrist_1_link: [forearm_link, wrist_2_link, wrist_3_link, robotiq_ft300_mounting_plate,
+        robotiq_ft300_sensor, robotiq_wrist_camera_link, robotiq_85_base_link, realsense_link,
+        camera_mount, robotiq_85_left_knuckle_link, robotiq_85_right_knuckle_link,
+        robotiq_85_left_finger_link, robotiq_85_right_finger_link, robotiq_85_left_inner_knuckle_link,
+        robotiq_85_right_inner_knuckle_link, robotiq_85_left_finger_tip_link, robotiq_85_right_finger_tip_link]
+      wrist_2_link: [wrist_1_link, wrist_3_link, robotiq_ft300_mounting_plate, robotiq_ft300_sensor,
+        robotiq_wrist_camera_link, robotiq_85_base_link, realsense_link, camera_mount,
+        robotiq_85_left_knuckle_link, robotiq_85_right_knuckle_link, robotiq_85_left_finger_link,
+        robotiq_85_right_finger_link, robotiq_85_left_inner_knuckle_link, robotiq_85_right_inner_knuckle_link,
+        robotiq_85_left_finger_tip_link, robotiq_85_right_finger_tip_link]
+      wrist_3_link: [camera_mount, flange, ft_frame, realsense_link, robotiq_85_base_link,
+        robotiq_85_left_finger_link, robotiq_85_left_finger_tip_link, robotiq_85_left_inner_knuckle_link,
+        robotiq_85_left_knuckle_link, robotiq_85_right_finger_link, robotiq_85_right_finger_tip_link,
+        robotiq_85_right_inner_knuckle_link, robotiq_85_right_knuckle_link, robotiq_ft300_mounting_plate,
+        robotiq_ft300_sensor, robotiq_wrist_camera_link, wrist_2_link]
+    tool_frames: [grasp_frame, camera_link]
+    urdf_path: /media/eencku/2TBDATA/yusian-ubuntu/UR5_curobo/assets/robot/ur5_robotiq/ur5_robotiq.urdf
+    use_external_assets: false
+    use_global_cumul: true

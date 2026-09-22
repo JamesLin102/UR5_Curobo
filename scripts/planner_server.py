@@ -16,7 +16,7 @@ Two operations, framed by scripts/proto.py:
         -> plan against the static scene PLUS whatever the map has learned.
 
 Run:
-    python scripts/planner_server.py --robot ur5e_2f85
+    python scripts/planner_server.py --robot ur5_robotiq
 """
 
 import argparse

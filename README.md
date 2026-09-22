@@ -152,7 +152,7 @@ changes — `build_ur5e_2f85_urdf.py`, `build_ur5e_2f85_config.py`,
 
 ```bash
 python tools/check_robot_cfg.py ur5e
-python tools/check_robot_cfg.py ur5e_robotiq_2f_85 ur5e_robotiq_2f_85.urdf
+python tools/check_robot_cfg.py ur5_robotiq ur5_robotiq.urdf
 ```
 
 ---
@@ -166,7 +166,7 @@ with `tools/convert_v1_robot_yaml.py` and verified to plan.
 | file | |
 |---|---|
 | `ur5e.yml` | arm only, `tool0` |
-| `ur5e_robotiq_2f_85.yml` | arm + gripper + wrist camera; what the demo uses |
+| `ur5_robotiq.yml` | arm + gripper + wrist camera; what the demo uses |
 | `ur5e_robotiq_2f_140.yml` | converted from 0.7.7, not wired into the demo |
 
 Point cuRobo at them with `ContentPath(robot_config_absolute_path=...,

@@ -28,7 +28,7 @@ print(f"[{name}] spheres     : {tuple(st.robot_spheres.shape)}")
 scene = Scene(cuboid=[Cuboid(name="table", dims=[1.5, 1.5, 0.1], pose=[0, 0, -0.06, 1, 0, 0, 0])])
 # Trim tool_frames to the one goal frame. Every frame left in there is a frame
 # plan_pose demands a target for, so a config that also exposes camera_link for
-# forward kinematics -- which ur5e_robotiq_2f_85 does -- fails with
+# forward kinematics -- which ur5_robotiq does -- fails with
 # "Ordered link names [...] not a subset of [...]" unless it is trimmed.
 # planner_server.build() does the same thing for the same reason.
 import copy

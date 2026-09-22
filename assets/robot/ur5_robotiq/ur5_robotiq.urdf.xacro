@@ -1,0 +1,89 @@
+<?xml version="1.0"?>
+<!-- UR5 + Robotiq FT 300 + Wrist Camera + 2F-85 + RealSense D435i.
+
+     Every link below is taken from eugene900805/mir_ur5_humble unchanged; the
+     only thing removed is the MiR100 chassis, so the arm stands on the ground
+     instead of on the mobile base. Mounting transforms are copied verbatim
+     from mir_description/urdf/include/mir_100_v1.urdf.xacro. -->
+<robot xmlns:xacro="http://ros.org/wiki/xacro" name="ur5_robotiq">
+
+  <xacro:include filename="/tmp/claude-1000/-media-eencku-2TBDATA-yusian-ubuntu-UR5-curobo/7641c2f1-5308-4508-b802-402af3a1f5bb/scratchpad/mir_ur5/mir_robot/mir_description/urdf/include/common_properties.urdf.xacro"/>
+  <xacro:include filename="/tmp/claude-1000/-media-eencku-2TBDATA-yusian-ubuntu-UR5-curobo/7641c2f1-5308-4508-b802-402af3a1f5bb/scratchpad/mir_ur5/Universal_Robots_ROS2_Description/urdf/ur_macro.xacro"/>
+  <xacro:include filename="/tmp/claude-1000/-media-eencku-2TBDATA-yusian-ubuntu-UR5-curobo/7641c2f1-5308-4508-b802-402af3a1f5bb/scratchpad/mir_ur5/realsense2_description/urdf/_d435i.urdf.xacro"/>
+  <xacro:include filename="/tmp/claude-1000/-media-eencku-2TBDATA-yusian-ubuntu-UR5-curobo/7641c2f1-5308-4508-b802-402af3a1f5bb/scratchpad/mir_ur5/mir_robot/mir_description/urdf/include/robotiq_wrist_stack.xacro"/>
+  <xacro:include filename="/tmp/claude-1000/-media-eencku-2TBDATA-yusian-ubuntu-UR5-curobo/7641c2f1-5308-4508-b802-402af3a1f5bb/scratchpad/mir_ur5/mir_robot/mir_description/urdf/include/robotiq_gripper_macro.xacro"/>
+
+  <xacro:property name="ur_cfg" value="/tmp/claude-1000/-media-eencku-2TBDATA-yusian-ubuntu-UR5-curobo/7641c2f1-5308-4508-b802-402af3a1f5bb/scratchpad/mir_ur5/Universal_Robots_ROS2_Description/config/ur5"/>
+
+  <!-- The arm stands on the floor; no chassis, no cabinet. -->
+  <link name="world"/>
+
+  <xacro:ur_robot
+    name="ur" tf_prefix="ur_" parent="world"
+    joint_limits_parameters_file="${ur_cfg}/joint_limits.yaml"
+    kinematics_parameters_file="${ur_cfg}/default_kinematics.yaml"
+    physical_parameters_file="${ur_cfg}/physical_parameters.yaml"
+    visual_parameters_file="${ur_cfg}/visual_parameters.yaml"
+    transmission_hw_interface="" safety_limits="true"
+    safety_pos_margin="0.15" safety_k_position="20"
+    use_fake_hardware="true" fake_sensor_commands="false"
+    sim_gazebo="false" sim_ignition="false" sim_isaac="false"
+    headless_mode="false"
+    initial_positions="${dict(shoulder_pan_joint=0.0, shoulder_lift_joint=-1.57, elbow_joint=0.0, wrist_1_joint=-1.57, wrist_2_joint=0.0, wrist_3_joint=0.0)}"
+    use_tool_communication="false" tool_voltage="0" tool_parity="0"
+    tool_baud_rate="115200" tool_stop_bits="1" tool_rx_idle_chars="1.5"
+    tool_tx_idle_chars="3.5" tool_device_name="/tmp/ttyUR" tool_tcp_port="54321"
+    robot_ip="0.0.0.0" script_filename="" output_recipe_filename=""
+    input_recipe_filename="" reverse_ip="0.0.0.0"
+    script_command_port="50004" reverse_port="50001"
+    script_sender_port="50002" trajectory_port="50003">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </xacro:ur_robot>
+
+  <!-- ur_tool0 -> FT 300 -> Wrist Camera -> robotiq_wrist_camera_tool_link -->
+  <xacro:robotiq_wrist_stack parent="ur_tool0"/>
+
+  <!-- D435i and its bracket, on the tool side of the wrist camera. -->
+  <link name="d435i_mount_frame"/>
+  <joint name="d435i_mount_frame_joint" type="fixed">
+    <parent link="robotiq_wrist_camera_tool_link"/>
+    <child link="d435i_mount_frame"/>
+    <origin xyz="0 0 0" rpy="${-pi/2} ${-pi/2} 0"/>
+  </joint>
+
+  <link name="camera_mount">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://mir_description/meshes/visual/D435i_mounted.STL" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <xacro:insert_block name="material_light_grey"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://mir_description/meshes/collision/D435i_mounted.STL" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="camera_mount_joint" type="fixed">
+    <parent link="d435i_mount_frame"/>
+    <child link="camera_mount"/>
+    <origin xyz="0.035 0.05 0.03" rpy="0 ${pi} ${0.5 * pi}"/>
+  </joint>
+
+  <xacro:sensor_d435i parent="d435i_mount_frame" name="realsense"
+                      use_nominal_extrinsics="true" add_gazebo_plugin="false">
+    <origin xyz="0.02 0 -0.061" rpy="${pi} 0 0"/>
+  </xacro:sensor_d435i>
+
+  <!-- 2F-85 -->
+  <xacro:robotiq_gripper name="RobotiqGripperHardwareInterface" prefix=""
+                         parent="robotiq_wrist_camera_tool_link"
+                         use_fake_hardware="true" com_port="/dev/ttyUSB0"
+                         sim_gazebo="false" sim_isaac="false"
+                         include_ros2_control="false">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </xacro:robotiq_gripper>
+
+</robot>

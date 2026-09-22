@@ -11,7 +11,7 @@ actually feeding the planner. Scenes live in scripts/scenes/; both processes
 must be started with the same --scene.
 
 Start planner_server.py first, then:
-    python scripts/isaacsim_ur5e_demo.py --robot ur5e_2f85
+    python scripts/isaacsim_ur5e_demo.py --robot ur5_robotiq
 """
 
 import argparse
@@ -337,7 +337,7 @@ def attach_wrist_camera(world, prim_path):
     spec = SCENE.cameras["wrist"]
     link = f"{prim_path}/{spec['link']}"
     if not world.stage.GetPrimAtPath(link).IsValid():
-        raise RuntimeError(f"{link} missing - rebuild the URDF with tools/build_ur5e_2f85_urdf.py")
+        raise RuntimeError(f"{link} missing - rebuild the URDF with tools/build_ur5_robotiq_urdf.py")
 
     cam = Camera(
         prim_path=f"{link}/d435i",

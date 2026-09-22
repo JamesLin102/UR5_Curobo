@@ -6,8 +6,8 @@ failure rate and how far each joint drifts from its nominal posture. Use it to
 compare a config before and after constraining the solution space.
 
 Run:
-    python tools/ab_solution_spread.py --config configs/ur5e_robotiq_2f_85.yml \
-        --urdf assets/robot/ur_description/ur5e_robotiq_2f_85.urdf \
+    python tools/ab_solution_spread.py --config configs/ur5_robotiq.yml \
+        --urdf assets/robot/ur5_robotiq/ur5_robotiq.urdf \
         --tool grasp_frame --cycles 60 --label before
 """
 

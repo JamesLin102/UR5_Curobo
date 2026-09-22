@@ -9,7 +9,7 @@ No Isaac Sim, so it costs seconds rather than minutes. Run one per port to
 compare two robots side by side in two tabs:
 
     python tools/show_collision_spheres.py ur5e
-    python tools/show_collision_spheres.py ur5e_2f85 --port 8081
+    python tools/show_collision_spheres.py ur5_robotiq --port 8081
 
 Ctrl-C to stop. The per-link breakdown is printed as well, because a radius
 that looks odd on screen is easier to chase from the numbers.
@@ -75,6 +75,11 @@ def main():
     spec = ROBOTS[args.robot]
     config_path = f"{ROOT}/{spec['config']}"
     q = args.q if args.q is not None else scenes.load(args.scene).home
+    # The viewer drives every actuated joint in the URDF, which on a robot with
+    # a locked gripper is wider than the cspace. Name the arm joints explicitly
+    # and let cuRobo fill the locked ones in at their locked values.
+    cspace = yaml.safe_load(open(config_path))["robot_cfg"]["kinematics"]["cspace"]
+    arm_joints = list(cspace["joint_names"])
 
     print(f"[{args.robot}] {os.path.basename(config_path)}")
     report(config_path)
@@ -83,7 +88,7 @@ def main():
         content_path=ContentPath(
             robot_config_absolute_path=config_path,
             robot_urdf_absolute_path=f"{ROOT}/{spec['urdf']}",
-            robot_asset_absolute_path=f"{ROOT}/assets/robot/ur_description",
+            robot_asset_absolute_path=f"{ROOT}/{spec.get('assets', 'assets/robot/ur_description')}",
         ),
         add_robot_to_scene=True,
         visualize_robot_spheres=True,
@@ -94,9 +99,12 @@ def main():
     )
     # from_position wants a tensor -- it multiplies the positions to derive a
     # zero velocity, which a plain list cannot do.
+    if len(q) != len(arm_joints):
+        raise SystemExit(
+            f"--q has {len(q)} values, {args.robot} has {len(arm_joints)} arm joints")
     viz.set_joint_state(JointState.from_position(
         torch.tensor([q], device="cuda", dtype=torch.float32),
-        joint_names=viz.joint_names))
+        joint_names=arm_joints))
 
     print(f"[{args.robot}] http://localhost:{args.port}   (Ctrl-C to stop)", flush=True)
     try:
