@@ -70,6 +70,11 @@ from isaacsim.util.debug_draw import _debug_draw  # noqa: E402
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 URDF = f"{ROOT}/{ROBOTS[ARGS.robot]['urdf']}"
 
+# The gripper joints' <limit velocity="..."> in the URDF. Used to budget how
+# many sim steps a full open or close actually needs; commanding it faster
+# just leaves the joint short of the target when the next plan starts.
+GRIPPER_RAD_PER_S = 2.0
+
 
 class Planner:
     """Framed socket client for planner_server.py."""
@@ -460,13 +465,51 @@ def main():
     probe = planner.plan(SCENE.home, SCENE.targets[0])
     curobo_names = probe["joint_names"]
     sim_names = list(robot.dof_names)
-    curobo_to_sim = [curobo_names.index(j) for j in sim_names]
-    sim_to_curobo = [sim_names.index(j) for j in curobo_names]
-    print(f"[demo] joints: sim {sim_names}")
 
-    home_sim = np.array(SCENE.home)[curobo_to_sim]
-    robot.set_joint_positions(home_sim)
-    robot.apply_action(ArticulationAction(joint_positions=home_sim))
+    # The simulator has more joints than the planner: the gripper is
+    # articulated in the URDF but locked out of cuRobo's cspace, so it is
+    # driven here on its own channel. Address the two sets by INDEX rather
+    # than reindexing whole arrays -- an arm command must never disturb the
+    # fingers, and a joint the planner has never heard of must not be looked
+    # up in its name list.
+    missing = [j for j in curobo_names if j not in sim_names]
+    if missing:
+        raise RuntimeError(f"planner joints absent from the simulator: {missing}")
+    arm_idx = [sim_names.index(j) for j in curobo_names]
+
+    grip_name = ROBOTS[ARGS.robot].get("gripper_joint")
+    grip_idx = sim_names.index(grip_name) if grip_name in sim_names else None
+    grip_open = ROBOTS[ARGS.robot].get("gripper_open", 0.0)
+    grip_closed = ROBOTS[ARGS.robot].get("gripper_closed", 0.0)
+    print(f"[demo] joints: {len(sim_names)} in sim, {len(curobo_names)} planned")
+    if grip_idx is None:
+        print("[demo] no gripper joint to drive")
+    else:
+        print(f"[demo] gripper: {grip_name} at sim index {grip_idx}, "
+              f"{grip_open} open .. {grip_closed} closed "
+              f"({len(sim_names) - len(curobo_names) - 1} mimic joints follow)")
+
+    def command_arm(q_curobo):
+        """Send one planner-ordered joint vector, touching nothing else."""
+        robot.apply_action(ArticulationAction(
+            joint_positions=np.asarray(q_curobo, dtype=np.float32),
+            joint_indices=np.asarray(arm_idx)))
+
+    def command_gripper(angle):
+        if grip_idx is None:
+            return
+        robot.apply_action(ArticulationAction(
+            joint_positions=np.array([angle], dtype=np.float32),
+            joint_indices=np.array([grip_idx])))
+
+    full_home = np.array(robot.get_joint_positions(), dtype=np.float32)
+    for k, i in enumerate(arm_idx):
+        full_home[i] = SCENE.home[k]
+    if grip_idx is not None:
+        full_home[grip_idx] = grip_open
+    robot.set_joint_positions(full_home)
+    command_arm(SCENE.home)
+    command_gripper(grip_open)
     for _ in range(60):
         world.step(render=True)
 
@@ -482,7 +525,7 @@ def main():
 
     def q_now():
         q_sim = robot.get_joint_positions()
-        return [float(q_sim[i]) for i in sim_to_curobo]
+        return [float(q_sim[i]) for i in arm_idx]
 
     q_history = []
 
@@ -525,13 +568,12 @@ def main():
         print("[demo] scanning the cell before planning...")
         fused = 0
         for pose in SCENE.scan_poses:
-            goal_sim = np.array(pose)[curobo_to_sim]
             for step in range(70):
                 if not simulation_app.is_running():
                     break
                 blend = min(1.0, (step + 1) / 50.0)
-                cmd = (1 - blend) * np.array(robot.get_joint_positions()) + blend * goal_sim
-                robot.apply_action(ArticulationAction(joint_positions=cmd))
+                cmd = [(1 - blend) * a + blend * b for a, b in zip(q_now(), pose)]
+                command_arm(cmd)
                 world.step(render=True)
                 q_history.append(q_now())
                 if step % ARGS.map_every == 0:
@@ -555,7 +597,7 @@ def main():
         print("[demo] static mode: arm held at HOME, no planning. "
               "Inspect the d435i view, then Ctrl-C or close the window.")
         while simulation_app.is_running():
-            robot.apply_action(ArticulationAction(joint_positions=home_sim))
+            command_arm(SCENE.home)
             world.step(render=True)
         simulation_app.close()
         return
@@ -590,7 +632,7 @@ def main():
         for wp_row in traj:
             if not simulation_app.is_running():
                 break
-            robot.apply_action(ArticulationAction(joint_positions=wp_row[curobo_to_sim]))
+            command_arm(wp_row)
             move_bodies(bodies, steps * SIM_DT)
             world.step(render=True)
             q_history.append(q_now())
@@ -598,18 +640,38 @@ def main():
             if cams and steps % ARGS.map_every == 0:
                 fuse()
 
-        for i in range(45):
+        # Close on arrival and open again before leaving. The planner is not
+        # told about this: the config locks the gripper OPEN, which is its
+        # widest, so a route that cleared with it open stays clear while it
+        # closes. Closing mid-travel would not be safe on that argument.
+        # The gripper's URDF velocity limit is 2.0 rad/s, so a full 0.8 rad
+        # stroke needs 0.4 s -- 24 steps at 60 Hz. Ten-step ramps left it
+        # stranded at +0.334 rad when the next plan started. Budget the travel
+        # from the limit rather than guessing: close, hold, open, settle.
+        stroke_steps = int(abs(grip_closed - grip_open) / GRIPPER_RAD_PER_S / SIM_DT) + 4
+        hold_steps = 10
+        settle = 90 if grip_idx is not None else 45
+        for i in range(settle):
             if not simulation_app.is_running():
                 break
             steps += 1
+            if grip_idx is not None:
+                if i < stroke_steps:
+                    phase = i / stroke_steps
+                elif i < stroke_steps + hold_steps:
+                    phase = 1.0
+                else:
+                    phase = max(0.0, 1.0 - (i - stroke_steps - hold_steps) / stroke_steps)
+                command_gripper(grip_open + (grip_closed - grip_open) * phase)
             move_bodies(bodies, steps * SIM_DT)
             world.step(render=True)
             if cams and i >= 15 and i % ARGS.map_every == 0:
                 fuse()
 
-        want = traj[-1][curobo_to_sim]
-        err = np.rad2deg(np.abs(np.asarray(robot.get_joint_positions()) - want))
-        print(f"[demo]   tracking error: max {err.max():.2f} deg")
+        err = np.rad2deg(np.abs(np.asarray(q_now()) - traj[-1]))
+        grip = "" if grip_idx is None else \
+            f", gripper back to {robot.get_joint_positions()[grip_idx]:+.3f} rad"
+        print(f"[demo]   tracking error: max {err.max():.2f} deg{grip}")
         target_idx = 1 - target_idx
 
     simulation_app.close()

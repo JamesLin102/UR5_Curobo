@@ -79,6 +79,37 @@ WRIST_CAM_YAW = 0.0
 ATTACH = {"xyz": f"0.0 0.0 {FT300_SENSOR_Z + WRIST_CAM_ADDED_Z:.4f}",
           "rpy": "0.0 0.0 1.57"}
 
+# --- gripper articulation -------------------------------------------------
+#
+# cuRobo 0.7.7's Kinova model, which the links here are copied from, makes
+# every 2F-85 joint FIXED. The origins are nevertheless identical to the
+# ros-industrial robotiq_2f_85_gripper_visualization macro -- checked joint by
+# joint -- so restoring the articulation moves nothing at angle 0; it only adds
+# the axes, limits and mimics that were dropped.
+#
+# The real 2F-85 is two mirrored 4-bar linkages, and a 4-bar needs a loop
+# closure that URDF cannot express. Every Robotiq ROS package approximates it
+# the same way and so does this: ONE driving revolute joint, the rest <mimic>.
+# The approximation is why the fingers stay roughly parallel rather than
+# tracking the true coupler curve.
+#
+# The driving joint is left_outer_knuckle_joint (upstream calls it
+# finger_joint). 0 rad is fully open, ~0.8 rad fully closed.
+GRIPPER_DRIVE = "left_outer_knuckle_joint"
+GRIPPER_OPEN, GRIPPER_CLOSED = 0.0, 0.8
+
+# joint -> (upper limit, mimic multiplier or None for the driving joint)
+GRIPPER_JOINTS = {
+    "left_outer_knuckle_joint":  (0.8, None),
+    "right_outer_knuckle_joint": (0.81, 1.0),
+    "left_inner_knuckle_joint":  (0.8757, 1.0),
+    "right_inner_knuckle_joint": (0.8757, 1.0),
+    "left_inner_finger_joint":   (0.8757, -1.0),
+    "right_inner_finger_joint":  (0.8757, -1.0),
+}
+# outer_finger and inner_finger_pad stay fixed: they are rigid offsets within
+# the linkage, not degrees of freedom.
+
 # Finger-pad height above the gripper base, summed along the 2F-85 chain:
 #   base->outer_knuckle  +0.054904
 #   ->outer_finger       -0.0041
@@ -258,8 +289,23 @@ def main():
             o = j.find("origin")
             o.set("xyz", ATTACH["xyz"])
             o.set("rpy", ATTACH["rpy"])
-        # Donor left a stale <limit> on a fixed joint; drop it.
-        if j.get("type") == "fixed":
+        # Restore the articulation the donor dropped, or clean up after it.
+        if jname in GRIPPER_JOINTS:
+            upper, mult = GRIPPER_JOINTS[jname]
+            j.set("type", "revolute")
+            for extra in list(j.findall("limit")) + list(j.findall("axis")) \
+                    + list(j.findall("mimic")):
+                j.remove(extra)
+            ET.SubElement(j, "axis").set("xyz", "1 0 0")
+            lim = ET.SubElement(j, "limit")
+            lim.set("lower", "0"); lim.set("upper", f"{upper}")
+            lim.set("velocity", "2.0"); lim.set("effort", "1000")
+            if mult is not None:
+                m = ET.SubElement(j, "mimic")
+                m.set("joint", GRIPPER_DRIVE)
+                m.set("multiplier", f"{mult}"); m.set("offset", "0")
+        elif j.get("type") == "fixed":
+            # Donor left a stale <limit> on a fixed joint; drop it.
             for extra in list(j.findall("limit")) + list(j.findall("axis")):
                 j.remove(extra)
         robot.append(j)
@@ -282,6 +328,8 @@ def main():
     arm.write(OUT, encoding="utf-8", xml_declaration=True)
     print(f"wrote {OUT}")
     print(f"  gripper links : {len(GRIPPER_LINKS)}")
+    print(f"  gripper joints: {GRIPPER_DRIVE} drives "
+          f"{len(GRIPPER_JOINTS) - 1} mimic joints, 0..{GRIPPER_CLOSED} rad")
     print(f"  grasp_frame   : {GRASP_Z:.6f} m above the gripper base")
 
 

@@ -74,77 +74,75 @@ robot_cfg:
       - center: [0.001, 0.001, 0.05]
         radius: -0.01
       robotiq_arg2f_base_link:
-      - center: [-0.00018555238784756511, -0.0003806650929618627, 0.032256655395030975]
-        radius: 0.04652397707104683
-      - center: [0.0005321648204699159, -0.011116531677544117, 0.07505086064338684]
-        radius: 0.017791518941521645
-      - center: [-0.0002495952358003706, 0.01253675390034914, 0.07767486572265625]
-        radius: 0.01418388169258833
+      - center: [-0.0005425337003543973, -0.0007462625508196652, 0.03263619542121887]
+        radius: 0.046756234019994736
+      - center: [0.0013862187042832375, 0.013752930797636509, 0.07552504539489746]
+        radius: 0.017153747379779816
+      - center: [0.0007300973520614207, -0.011343526653945446, 0.07551786303520203]
+        radius: 0.016400514170527458
       left_outer_knuckle:
-      - center: [-0.000747214478906244, 0.025198178365826607, 0.0007485572132281959]
-        radius: 0.014285788871347904
-      - center: [0.0010471867863088846, 0.0012280005030333996, 0.0016511896392330527]
-        radius: 0.010174386203289032
+      - center: [0.0007065957179293036, 0.0271291546523571, 0.003408880904316902]
+        radius: 0.014154292643070221
+      - center: [1.7767404642654583e-05, 0.0028232361655682325, 0.0001558218791615218]
+        radius: 0.010775730945169926
       left_outer_finger:
-      - center: [0.0016054726438596845, 0.0031562265940010548, 0.03858746588230133]
-        radius: 0.017834099009633064
-      - center: [0.0014273269334807992, -0.0012072835816070437, 0.009027971886098385]
-        radius: 0.017452558502554893
-      - center: [-0.009030070155858994, 0.0011729731922969222, 0.025979237630963326]
-        radius: 0.0031088097020983696
+      - center: [-0.00012602529022842646, 0.004907440394163132, 0.009184932336211205]
+        radius: 0.016677439212799072
+      - center: [-0.0017875824123620987, 0.001683832728303969, 0.037779759615659714]
+        radius: 0.016689857468008995
+      - center: [0.009674004279077053, 0.0004750624066218734, 0.019703498110175133]
+        radius: 0.003554157679900527
       left_inner_finger:
-      - center: [-0.0004070977447554469, -0.0012061018496751785, 0.0009315162315033376]
-        radius: 0.009520900435745716
-      - center: [0.00018485884356778115, -0.015416832640767097, 0.010440221056342125]
-        radius: 0.012997718527913094
-      - center: [-0.0009961415780708194, -0.01585015282034874, 0.033473607152700424]
-        radius: 0.011264448054134846
+      - center: [-0.00036850504693575203, -0.0023841415531933308, 0.0007310482324101031]
+        radius: 0.009189963340759277
+      - center: [-0.0004849464166909456, -0.015525586903095245, 0.011005639098584652]
+        radius: 0.012866725213825703
+      - center: [-0.0007541743689216673, -0.015717370435595512, 0.034930385649204254]
+        radius: 0.009656764566898346
       left_inner_knuckle:
-      - center: [-0.010603196918964386, 0.026166221126914024, 0.039875321090221405]
+      - center: [-0.018382035195827484, 0.002563981106504798, -0.005414763931185007]
         radius: 0.0020000000949949026
-      - center: [-0.012000000104308128, -0.004308818839490414, -8.685966895427555e-05]
+      - center: [-0.013500000350177288, 0.0388730987906456, 0.04186743497848511]
         radius: 0.0020000000949949026
-      - center: [0.007499999832361937, 0.036030758172273636, 0.035953667014837265]
+      - center: [-0.014248549938201904, 0.0052799503318965435, 0.0154206408187747]
         radius: 0.0020000000949949026
-      - center: [-0.017000000923871994, 0.011209259741008282, 0.009161556139588356]
+      - center: [0.018681876361370087, 0.005604943260550499, 0.008268898352980614]
         radius: 0.0020000000949949026
-      - center: [0.005934744141995907, 0.02031153067946434, 0.024735094979405403]
-        radius: 0.0020000000949949026
-      - center: [0.017000000923871994, 0.016603481024503708, 0.012442747130990028]
-        radius: 0.0020000000949949026
-      - center: [0.019500000402331352, -0.0006990967085584998, 0.005158215761184692]
+      - center: [0.017000000923871994, 0.017931170761585236, 0.027999667450785637]
         radius: 0.0020000000949949026
       right_outer_knuckle:
-      - center: [-0.0004968671128153801, 0.026702281087636948, 0.0019415552960708737]
-        radius: 0.012939215637743473
-      - center: [0.0012920284643769264, 0.0020729461684823036, -0.0004781317838933319]
-        radius: 0.009848535992205143
+      - center: [-0.0020481019746512175, 0.025235619395971298, 0.0016369601944461465]
+        radius: 0.013432598672807217
+      - center: [-0.00010367659706389531, 0.0013814757112413645, -0.000680865254253149]
+        radius: 0.010730912908911705
       right_outer_finger:
-      - center: [-0.0012786388397216797, 0.0058721499517560005, 0.03634565323591232]
-        radius: 0.017925364896655083
-      - center: [-0.0034026899375021458, 3.315457433927804e-05, 0.0071683223359286785]
-        radius: 0.01675315760076046
-      - center: [0.007095838896930218, 0.003882834454998374, -0.005004078149795532]
-        radius: 0.0007144002593122423
+      - center: [-0.0002856834325939417, 0.0007582781254313886, 0.008431963622570038]
+        radius: 0.016025837510824203
+      - center: [-0.0026960070244967937, 0.004528381396085024, 0.03567451611161232]
+        radius: 0.018272021785378456
+      - center: [-0.010919780470430851, 0.007743042893707752, 0.052503347396850586]
+        radius: 0.001560661825351417
+      - center: [-0.010636567138135433, 0.004254174884408712, 0.04010273143649101]
+        radius: 0.002887439215555787
       right_inner_finger:
-      - center: [-0.0006068114307709038, -0.0034473503474146128, -0.0005914136418141425]
-        radius: 0.010014834813773632
-      - center: [-0.0003352204221300781, -0.01730688475072384, 0.010183111764490604]
-        radius: 0.013213472440838814
-      - center: [0.0006074265693314373, -0.015572609379887581, 0.03337913751602173]
-        radius: 0.010123664513230324
+      - center: [0.000181665614945814, -0.0022041206248104572, 0.00019874656572937965]
+        radius: 0.00911211222410202
+      - center: [-0.0009928055806085467, -0.016717836260795593, 0.010192151181399822]
+        radius: 0.011823196895420551
+      - center: [-0.0005840255180373788, -0.01461096666753292, 0.03323984891176224]
+        radius: 0.01108541153371334
       right_inner_knuckle:
-      - center: [-0.010405783541500568, 0.022306421771645546, 0.021236324682831764]
+      - center: [0.00012267479905858636, 0.02526525780558586, 0.020504210144281387]
         radius: 0.0020000000949949026
-      - center: [0.013453380204737186, 0.005199475679546595, 0.015326417982578278]
+      - center: [-0.015023643150925636, -0.0034437563735991716, 0.0052064936608076096]
         radius: 0.0020000000949949026
-      - center: [0.012000000104308128, 0.0005605505430139601, -0.005314566660672426]
+      - center: [0.007499999832361937, 0.035464342683553696, 0.03979337960481644]
         radius: 0.0020000000949949026
-      - center: [-0.009514134377241135, 0.03370623290538788, 0.04839305952191353]
+      - center: [-0.013500000350177288, 0.035162437707185745, 0.04196269437670708]
         radius: 0.0020000000949949026
-      - center: [0.0061521464958786964, 0.02060607261955738, 0.033365219831466675]
+      - center: [-0.015266096219420433, 0.013260634616017342, 0.02476482279598713]
         radius: 0.0020000000949949026
-      - center: [-0.019500000402331352, -0.002763973083347082, -5.222469553700648e-05]
+      - center: [0.012000000104308128, -0.002885401714593172, 0.003493210067972541]
         radius: 0.0020000000949949026
       camera_mount:
       - center: [0.0, -0.03, 0.0]
@@ -213,7 +211,7 @@ robot_cfg:
     grasp_contact_link_names: null
     load_meshes: false
     load_tool_frames_with_mesh: false
-    lock_joints: null
+    lock_joints: {left_outer_knuckle_joint: 0.0}
     mesh_link_names: [base_link_inertia, shoulder_link, upper_arm_link, forearm_link,
       wrist_1_link, wrist_2_link, wrist_3_link, robotiq_arg2f_base_link, left_outer_knuckle,
       left_outer_finger, left_inner_finger, left_inner_finger_pad, left_inner_knuckle,
@@ -242,39 +240,37 @@ robot_cfg:
         wrist_3_link, wrist_camera]
       grasp_frame: [robotiq_arg2f_base_link]
       left_inner_finger: [left_outer_finger, left_inner_finger_pad, left_inner_knuckle,
-        camera_mount, right_outer_knuckle, right_outer_finger, right_inner_finger,
-        right_inner_finger_pad, right_inner_knuckle, ft300_coupling, ft300_sensor,
+        camera_mount, right_outer_knuckle, right_outer_finger, ft300_coupling, ft300_sensor,
         wrist_camera]
       left_inner_finger_pad: [left_inner_finger, camera_mount, left_inner_knuckle,
-        right_outer_knuckle, right_outer_finger, right_inner_finger, right_inner_finger_pad,
-        right_inner_knuckle, ft300_coupling, ft300_sensor, wrist_camera]
+        right_outer_knuckle, right_outer_finger, right_inner_knuckle, ft300_coupling,
+        ft300_sensor, wrist_camera]
       left_inner_knuckle: [robotiq_arg2f_base_link, camera_mount, right_outer_knuckle,
         right_outer_finger, right_inner_finger, right_inner_finger_pad, right_inner_knuckle,
         ft300_coupling, ft300_sensor, wrist_camera]
-      left_outer_finger: [left_outer_knuckle, left_inner_finger, left_inner_knuckle,
-        camera_mount, left_inner_finger_pad, right_outer_knuckle, right_outer_finger,
-        right_inner_finger, right_inner_finger_pad, right_inner_knuckle, ft300_coupling,
-        ft300_sensor, wrist_camera]
+      left_outer_finger: [left_outer_knuckle, left_inner_finger, camera_mount, left_inner_finger_pad,
+        left_inner_knuckle, right_outer_knuckle, right_outer_finger, right_inner_finger,
+        right_inner_finger_pad, right_inner_knuckle, ft300_coupling, ft300_sensor,
+        wrist_camera]
       left_outer_knuckle: [robotiq_arg2f_base_link, left_outer_finger, camera_mount,
         left_inner_finger, left_inner_finger_pad, left_inner_knuckle, right_outer_knuckle,
         right_outer_finger, right_inner_finger, right_inner_finger_pad, right_inner_knuckle,
         ft300_coupling, ft300_sensor, wrist_camera]
       right_inner_finger: [right_outer_finger, right_inner_finger_pad, right_inner_knuckle,
         camera_mount, ft300_coupling, ft300_sensor, wrist_camera]
-      right_inner_finger_pad: [right_inner_finger, right_inner_knuckle, camera_mount,
+      right_inner_finger_pad: [right_inner_finger, camera_mount, right_inner_knuckle,
         ft300_coupling, ft300_sensor, wrist_camera]
       right_inner_knuckle: [robotiq_arg2f_base_link, camera_mount, ft300_coupling,
         ft300_sensor, wrist_camera]
       right_outer_finger: [right_outer_knuckle, right_inner_finger, camera_mount,
-        right_inner_finger_pad, right_inner_knuckle, ft300_coupling, ft300_sensor,
-        wrist_camera]
+        right_inner_finger_pad, ft300_coupling, ft300_sensor, wrist_camera]
       right_outer_knuckle: [robotiq_arg2f_base_link, right_outer_finger, camera_mount,
         right_inner_finger, right_inner_finger_pad, right_inner_knuckle, ft300_coupling,
         ft300_sensor, wrist_camera]
       robotiq_arg2f_base_link: [tool0, left_outer_knuckle, left_inner_knuckle, right_outer_knuckle,
         right_inner_knuckle, grasp_frame, camera_mount, ft300_sensor, wrist_camera,
-        left_outer_finger, left_inner_finger, left_inner_finger_pad, right_outer_finger,
-        right_inner_finger, right_inner_finger_pad, ft300_coupling]
+        left_inner_finger, left_inner_finger_pad, right_inner_finger, right_inner_finger_pad,
+        ft300_coupling]
       shoulder_link: [base_link_inertia, tool0, upper_arm_link]
       tool0: [flange, robotiq_arg2f_base_link, ft300_coupling, wrist_camera]
       upper_arm_link: [forearm_link, shoulder_link, tool0]

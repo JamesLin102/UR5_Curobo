@@ -366,14 +366,27 @@ def handle_plan(planner, kin, tool_frame, header):
     if not ok:
         out["status"] = str(getattr(res, "status", "unknown"))
         return out, b""
-    traj = res.interpolated_trajectory.position[0, 0]
+    # The trajectory is WIDER than the cspace: cuRobo appends the joints it
+    # was told to lock, so a 6-DOF plan on a robot with a locked gripper comes
+    # back 7 columns wide, with the gripper last. Select by the trajectory's
+    # own joint_names rather than trusting its width -- sending the extra
+    # column would hand the client a vector one longer than the joint list it
+    # was given, and nothing would say so.
+    itraj = res.interpolated_trajectory
+    traj = itraj.position[0, 0]
+    names = list(itraj.joint_names) if itraj.joint_names is not None \
+        else list(kin.joint_names)
+    keep = [names.index(j) for j in kin.joint_names]
+    if keep != list(range(traj.shape[1])):
+        traj = traj[:, keep]
+
     n = int(res.interpolated_last_tstep[0]) if res.interpolated_last_tstep is not None \
         else traj.shape[0]
     n = max(2, min(n, traj.shape[0]))
     out["solve_ms"] = float(res.solve_time * 1e3)
     out["n"] = n
     out["dof"] = traj.shape[1]
-    return out, traj[:n].cpu().numpy().astype(np.float32).tobytes()
+    return out, traj[:n].contiguous().cpu().numpy().astype(np.float32).tobytes()
 
 
 def main():

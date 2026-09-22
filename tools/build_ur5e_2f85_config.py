@@ -86,6 +86,20 @@ CAMERA_IGNORES = [
     "right_outer_knuckle", "right_inner_knuckle", "right_outer_finger", "right_inner_finger",
 ]
 
+# The gripper is articulated in the URDF but LOCKED here, so cuRobo plans 6
+# DOF and not 7. franka.yml does the same with its two finger joints.
+#
+# Locking is not the same as the joints being fixed: cuRobo still places the
+# finger links -- and therefore their collision spheres -- at this angle, so
+# the planner knows the gripper's real shape. The five mimic joints follow
+# from the driving one and do not need listing.
+#
+# 0 rad is fully open, which is the pose to plan against: it is the widest the
+# gripper ever is, so a path that clears with the fingers open clears with
+# them anywhere. A plan made at one lock value is NOT valid at another.
+GRIPPER_DRIVE = "left_outer_knuckle_joint"
+GRIPPER_LOCK_RAD = 0.0
+
 GRIPPER_LINKS = [
     "robotiq_arg2f_base_link",
     "left_outer_knuckle", "left_outer_finger", "left_inner_finger",
@@ -147,6 +161,23 @@ def main():
         ignore[link] = sorted(set(ignore.get(link, [])) | set(others))
     k["self_collision_ignore"] = ignore
     k["tool_frames"] = ["grasp_frame", "camera_link"]
+    k["lock_joints"] = {GRIPPER_DRIVE: GRIPPER_LOCK_RAD}
+    # cspace stays the six arm joints; the builder may have picked up the
+    # gripper's driving joint as a seventh, so drop it explicitly rather than
+    # trusting lock_joints to have already done it.
+    arm_joints = arm["cspace"]["joint_names"]
+    cs = k["cspace"]
+    if cs.get("joint_names") != arm_joints:
+        names = cs["joint_names"]
+        width = len(names)          # capture BEFORE trimming anything: joint_names
+                                    # is itself one of the per-joint lists, and
+                                    # shrinking it mid-loop silently stops the
+                                    # rest from matching
+        keep = [i for i, n in enumerate(names) if n in arm_joints]
+        for key, val in list(cs.items()):
+            if key != "joint_names" and isinstance(val, list) and len(val) == width:
+                cs[key] = [val[i] for i in keep]
+        cs["joint_names"] = [names[i] for i in keep]
     k["format_version"] = 2.0
 
     out = built if "robot_cfg" in built else {"robot_cfg": built}
@@ -158,6 +189,8 @@ def main():
     print(f"  ft300_coupling            : {len(FT300_SPHERES)} hand-placed spheres "
           f"(the whole FT 300; ft300_sensor is mesh-only)")
     print(f"  wrist_camera              : {len(WRIST_CAM_SPHERES)} hand-placed spheres")
+    print(f"  gripper                   : {GRIPPER_DRIVE} locked at "
+          f"{GRIPPER_LOCK_RAD} rad (open); cspace = {k['cspace']['joint_names']}")
     if dropped:
         print(f"  gripper links with no mesh: {dropped}")
 
