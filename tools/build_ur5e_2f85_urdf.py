@@ -16,7 +16,11 @@ Run:
 
 import copy
 import os
+import sys
 import xml.etree.ElementTree as ET
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
+from rig import ROBOTS  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 V7 = "/home/eencku/curobo-0.7.7/src/curobo/content/assets/robot"
@@ -89,24 +93,35 @@ ATTACH = {"xyz": f"0.0 0.0 {FT300_SENSOR_Z + WRIST_CAM_ADDED_Z:.4f}",
 #
 # The real 2F-85 is two mirrored 4-bar linkages, and a 4-bar needs a loop
 # closure that URDF cannot express. Every Robotiq ROS package approximates it
-# the same way and so does this: ONE driving revolute joint, the rest <mimic>.
-# The approximation is why the fingers stay roughly parallel rather than
-# tracking the true coupler curve.
+# with one driving joint and <mimic> followers.
 #
-# The driving joint is left_outer_knuckle_joint (upstream calls it
-# finger_joint). 0 rad is fully open, ~0.8 rad fully closed.
-GRIPPER_DRIVE = "left_outer_knuckle_joint"
+# The joints are made revolute here, but NO <mimic> tags are written. PhysX
+# refuses to build the constraint -- "the revolute joint at ... needs a finite
+# limit set to be used by the mimic joint feature", though every one of them
+# gets lower="0" upper="0.8757" below -- and that failure takes the whole
+# articulation down with it: the fingers visibly come apart in Isaac Sim while
+# cuRobo, which resolves mimics itself and never touches PhysX, shows a
+# perfectly correct gripper. Verified by stripping the tags: the error count
+# goes 1 -> 0 and the articulation builds.
+#
+# The coupling therefore lives in rig.ROBOTS[...]["gripper_joints"], which
+# both the config builder and the simulator read. See HANDOVER section 6.
 GRIPPER_OPEN, GRIPPER_CLOSED = 0.0, 0.8
 
-# joint -> (upper limit, mimic multiplier or None for the driving joint)
-GRIPPER_JOINTS = {
-    "left_outer_knuckle_joint":  (0.8, None),
-    "right_outer_knuckle_joint": (0.81, 1.0),
-    "left_inner_knuckle_joint":  (0.8757, 1.0),
-    "right_inner_knuckle_joint": (0.8757, 1.0),
-    "left_inner_finger_joint":   (0.8757, -1.0),
-    "right_inner_finger_joint":  (0.8757, -1.0),
+# joint -> travel MAGNITUDE (rad), upstream's numbers. The SIGN comes from
+# rig's coupling: a joint with multiplier -1 travels negative, so a limit of
+# lower="0" would pin it there. That is exactly what happened -- the four
+# positive joints tracked a close command perfectly while both inner_finger
+# joints sat at -0.000, clamped by their own limit.
+GRIPPER_SPAN = {
+    "left_outer_knuckle_joint": 0.8,
+    "right_outer_knuckle_joint": 0.81,
+    "left_inner_knuckle_joint": 0.8757,
+    "right_inner_knuckle_joint": 0.8757,
+    "left_inner_finger_joint": 0.8757,
+    "right_inner_finger_joint": 0.8757,
 }
+GRIPPER_COUPLING = ROBOTS["ur5e_2f85"]["gripper_joints"]
 # outer_finger and inner_finger_pad stay fixed: they are rigid offsets within
 # the linkage, not degrees of freedom.
 
@@ -290,20 +305,17 @@ def main():
             o.set("xyz", ATTACH["xyz"])
             o.set("rpy", ATTACH["rpy"])
         # Restore the articulation the donor dropped, or clean up after it.
-        if jname in GRIPPER_JOINTS:
-            upper, mult = GRIPPER_JOINTS[jname]
+        if jname in GRIPPER_SPAN:
             j.set("type", "revolute")
             for extra in list(j.findall("limit")) + list(j.findall("axis")) \
                     + list(j.findall("mimic")):
                 j.remove(extra)
             ET.SubElement(j, "axis").set("xyz", "1 0 0")
+            span = GRIPPER_SPAN[jname]
+            lo, hi = (0.0, span) if GRIPPER_COUPLING[jname] > 0 else (-span, 0.0)
             lim = ET.SubElement(j, "limit")
-            lim.set("lower", "0"); lim.set("upper", f"{upper}")
+            lim.set("lower", f"{lo}"); lim.set("upper", f"{hi}")
             lim.set("velocity", "2.0"); lim.set("effort", "1000")
-            if mult is not None:
-                m = ET.SubElement(j, "mimic")
-                m.set("joint", GRIPPER_DRIVE)
-                m.set("multiplier", f"{mult}"); m.set("offset", "0")
         elif j.get("type") == "fixed":
             # Donor left a stale <limit> on a fixed joint; drop it.
             for extra in list(j.findall("limit")) + list(j.findall("axis")):
@@ -328,8 +340,8 @@ def main():
     arm.write(OUT, encoding="utf-8", xml_declaration=True)
     print(f"wrote {OUT}")
     print(f"  gripper links : {len(GRIPPER_LINKS)}")
-    print(f"  gripper joints: {GRIPPER_DRIVE} drives "
-          f"{len(GRIPPER_JOINTS) - 1} mimic joints, 0..{GRIPPER_CLOSED} rad")
+    print(f"  gripper joints: {len(GRIPPER_SPAN)} revolute, limits signed by "
+          f"rig's coupling, no <mimic> (PhysX rejects it)")
     print(f"  grasp_frame   : {GRASP_Z:.6f} m above the gripper base")
 
 

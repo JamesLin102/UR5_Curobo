@@ -477,17 +477,33 @@ def main():
         raise RuntimeError(f"planner joints absent from the simulator: {missing}")
     arm_idx = [sim_names.index(j) for j in curobo_names]
 
-    grip_name = ROBOTS[ARGS.robot].get("gripper_joint")
+    GRIPPER_COUPLING = ROBOTS[ARGS.robot].get("gripper_joints") or {}
+    grip_name = next(iter(GRIPPER_COUPLING), None)
     grip_idx = sim_names.index(grip_name) if grip_name in sim_names else None
+    # The whole linkage, driven explicitly. The URDF carries no <mimic> tags:
+    # PhysX refuses to build the constraint ("needs a finite limit set to be
+    # used by the mimic joint feature", although every one of them has
+    # lower="0" upper="0.8757") and that failure takes the articulation with
+    # it -- the fingers come apart on screen. Verified by stripping the tags:
+    # the PhysX error count goes 1 -> 0 and the articulation builds. The
+    # coupling therefore lives in rig.ROBOTS and is applied here.
+    #
+    # Worth remembering that cuRobo showed a perfectly correct gripper
+    # throughout, because it resolves this itself and never goes near PhysX.
+    # Checking the planner's collision spheres is not checking the simulator.
+    coupling = {j: m for j, m in GRIPPER_COUPLING.items() if j in sim_names}
+    grip_idx_all = np.array([sim_names.index(j) for j in coupling])
+    grip_mult = np.array(list(coupling.values()), dtype=np.float32)
+
     grip_open = ROBOTS[ARGS.robot].get("gripper_open", 0.0)
     grip_closed = ROBOTS[ARGS.robot].get("gripper_closed", 0.0)
     print(f"[demo] joints: {len(sim_names)} in sim, {len(curobo_names)} planned")
     if grip_idx is None:
         print("[demo] no gripper joint to drive")
     else:
-        print(f"[demo] gripper: {grip_name} at sim index {grip_idx}, "
+        print(f"[demo] gripper: {len(coupling)} joints driven explicitly, "
               f"{grip_open} open .. {grip_closed} closed "
-              f"({len(sim_names) - len(curobo_names) - 1} mimic joints follow)")
+              f"(no <mimic>; PhysX rejects it)")
 
     def command_arm(q_curobo):
         """Send one planner-ordered joint vector, touching nothing else."""
@@ -496,11 +512,12 @@ def main():
             joint_indices=np.asarray(arm_idx)))
 
     def command_gripper(angle):
-        if grip_idx is None:
+        """One commanded angle -> every joint of the linkage."""
+        if not len(grip_idx_all):
             return
         robot.apply_action(ArticulationAction(
-            joint_positions=np.array([angle], dtype=np.float32),
-            joint_indices=np.array([grip_idx])))
+            joint_positions=(grip_mult * angle).astype(np.float32),
+            joint_indices=grip_idx_all))
 
     full_home = np.array(robot.get_joint_positions(), dtype=np.float32)
     for k, i in enumerate(arm_idx):

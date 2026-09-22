@@ -9,10 +9,16 @@ Run:
 """
 
 import os
+import sys
 
 import yaml
 
-from curobo.robot_builder import RobotBuilder
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
+from rig import ROBOTS  # noqa: E402
+
+from curobo.robot_builder import RobotBuilder  # noqa: E402
+
+GRIPPER_COUPLING = ROBOTS["ur5e_2f85"]["gripper_joints"]
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 URDF = f"{ROOT}/assets/robot/ur_description/ur5e_robotiq_2f_85.urdf"
@@ -87,17 +93,20 @@ CAMERA_IGNORES = [
 ]
 
 # The gripper is articulated in the URDF but LOCKED here, so cuRobo plans 6
-# DOF and not 7. franka.yml does the same with its two finger joints.
+# DOF and not 12. franka.yml does the same with its two finger joints.
 #
 # Locking is not the same as the joints being fixed: cuRobo still places the
-# finger links -- and therefore their collision spheres -- at this angle, so
-# the planner knows the gripper's real shape. The five mimic joints follow
-# from the driving one and do not need listing.
+# finger links -- and therefore their collision spheres -- at these angles, so
+# the planner knows the gripper's real shape.
+#
+# ALL SIX are listed. The URDF carries no <mimic> tags (PhysX rejects them and
+# breaks the articulation, see build_ur5e_2f85_urdf.py), so nothing derives
+# the followers for us; the coupling comes from rig.ROBOTS, which is also what
+# the simulator drives from.
 #
 # 0 rad is fully open, which is the pose to plan against: it is the widest the
 # gripper ever is, so a path that clears with the fingers open clears with
 # them anywhere. A plan made at one lock value is NOT valid at another.
-GRIPPER_DRIVE = "left_outer_knuckle_joint"
 GRIPPER_LOCK_RAD = 0.0
 
 GRIPPER_LINKS = [
@@ -161,7 +170,8 @@ def main():
         ignore[link] = sorted(set(ignore.get(link, [])) | set(others))
     k["self_collision_ignore"] = ignore
     k["tool_frames"] = ["grasp_frame", "camera_link"]
-    k["lock_joints"] = {GRIPPER_DRIVE: GRIPPER_LOCK_RAD}
+    k["lock_joints"] = {j: GRIPPER_LOCK_RAD * mult
+                        for j, mult in GRIPPER_COUPLING.items()}
     # cspace stays the six arm joints; the builder may have picked up the
     # gripper's driving joint as a seventh, so drop it explicitly rather than
     # trusting lock_joints to have already done it.
@@ -189,7 +199,7 @@ def main():
     print(f"  ft300_coupling            : {len(FT300_SPHERES)} hand-placed spheres "
           f"(the whole FT 300; ft300_sensor is mesh-only)")
     print(f"  wrist_camera              : {len(WRIST_CAM_SPHERES)} hand-placed spheres")
-    print(f"  gripper                   : {GRIPPER_DRIVE} locked at "
+    print(f"  gripper                   : {len(GRIPPER_COUPLING)} joints locked at "
           f"{GRIPPER_LOCK_RAD} rad (open); cspace = {k['cspace']['joint_names']}")
     if dropped:
         print(f"  gripper links with no mesh: {dropped}")

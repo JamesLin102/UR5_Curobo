@@ -217,9 +217,24 @@ measured this; re-run it if you change limits.
 ### Gripper fingers are articulated, but not planned
 
 The 2F-85 is two mirrored 4-bar linkages, and a 4-bar needs a loop closure
-URDF cannot express. The approximation every Robotiq ROS package uses, and the
-one here: **one driving revolute joint, five `<mimic>` joints following it.**
-`left_outer_knuckle_joint` drives, 0 rad open to 0.8 rad closed.
+URDF cannot express. The approximation every Robotiq ROS package uses is one
+driving joint plus `<mimic>` followers — but **the URDF here carries no
+`<mimic>` tags**, because PhysX will not have them:
+
+```
+Usd Physics: the revolute joint at .../left_inner_knuckle_joint needs a
+finite limit set to be used by the mimic joint feature
+```
+
+every one of them having `lower="0" upper="0.8757"`. The failure is not
+contained: it takes the whole articulation with it, and the fingers visibly
+come apart in the viewport. Stripping the tags takes the error count 1 → 0 and
+the articulation builds.
+
+The coupling therefore lives in `rig.ROBOTS[...]["gripper_joints"]` — joint to
+multiplier, ±1 — and three consumers derive from it: the URDF builder takes the
+**sign of each joint's limits** from it, the config builder locks all six, and
+the simulator commands all six. Change a multiplier and all three follow.
 
 cuRobo 0.7.7's Kinova model — which these links are copied from — made every
 gripper joint `fixed`, but left the origins identical to the ros-industrial
@@ -237,23 +252,34 @@ It is locked **open** on purpose. That is the widest the gripper ever is, so a
 route that clears with it open stays clear while it closes. The reverse does
 not hold, and a plan made at one lock value is not valid at another.
 
-Two things that bite:
+Three things that bite:
 
 - **The returned trajectory is wider than the cspace.** A 6-DOF plan comes back
-  7 columns, the locked joint appended, and only `interpolated_trajectory.
-  joint_names` says so. `handle_plan` selects columns by name; trusting the
-  width would silently hand the client a vector one longer than the joint list
-  it was given.
+  **12** columns here — the six locked joints appended — and only
+  `interpolated_trajectory.joint_names` says so. It was 7 when a single joint
+  was locked, which is exactly why `handle_plan` selects columns by name:
+  anything hard-coded to the width would now be silently off.
+- **Signed limits.** A joint with multiplier −1 travels negative, so
+  `lower="0"` pins it at zero. Driven explicitly, the four positive joints
+  tracked a close command perfectly while both `inner_finger` joints sat at
+  −0.000. Upstream's URDF has the same `lower="0"` with `multiplier="-1"`, and
+  gets away with it only because a mimic constraint computes the follower
+  rather than commanding it through its own limit.
 - **Budget the stroke from the velocity limit.** The joints are limited to
   2.0 rad/s, so 0.8 rad needs 0.4 s — 24 steps at 60 Hz. Ten-step ramps left
   the gripper stranded at +0.334 rad when the next plan started. Sized from
   the limit it returns to +0.001..+0.017 rad every cycle.
 
-Isaac Sim imports the mimic joints natively (it logs that it is ignoring their
-velocity limits, which is correct — a follower's speed comes from its leader),
-so only the driving joint needs commanding. The articulation has 12 DOF where
-the planner has 6, so the demo addresses the two sets by index rather than
-reindexing whole arrays.
+**Checking the planner is not checking the simulator.** cuRobo resolves the
+coupling itself and never goes near PhysX, so throughout the broken-linkage
+episode it reported a perfectly correct gripper — spheres moving 48.5 mm over
+the stroke — while the fingers were coming apart on screen. The importer
+logging that it saw the `<mimic>` tags is not the physics engine agreeing to
+enforce them. Verify both sides: PhysX joint angles read back after a
+commanded move, and cuRobo's spheres.
+
+The articulation has 12 DOF where the planner has 6, so the demo addresses the
+two sets by joint index rather than reindexing whole arrays.
 
 Actuation is geometric only: no grasping. `DRAG_CUBE` is a `VisualCuboid` with
 no physics, so there is nothing to pick up yet.
@@ -556,7 +582,7 @@ Useful as regression baselines.
 | Mapper ESDF + `update_world` | 1.3 ms (compute_esdf alone 0.1 ms) |
 | Map memory | 22 MB (both cameras) |
 | Map size, both cameras | 26 000–31 000 voxels after ~1000 frames, then flat |
-| Trajectory tracking error in sim | median 0.09°, 99th pct 0.44° (0.08–0.27 over 71 plans); 0.09–0.73° once the gripper actuates |
+| Trajectory tracking error in sim | median 0.09°, 99th pct 0.44° (0.08–0.27 over 71 plans); 0.09–0.19° with the gripper actuating |
 | Arm's travel corridor | z 0.4–0.6 m |
 | `HOME` tool height / obstacle clearance | z 0.550 m / +140 mm |
 | Wrist camera table footprint over a full cycle | x 0.30–0.45, y −0.45–+0.30 |
