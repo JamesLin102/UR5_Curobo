@@ -12,7 +12,15 @@ Copy this file to add your own scene, then run both processes with
 from .base import SceneSpec, WatchBox
 
 
-HOME = [0.0, -2.2, 1.9, -1.383, -1.57, 0.0]
+# Rest pose. shoulder_lift and elbow are raised relative to the obvious
+# [0, -2.2, 1.9, ...]: with the FT 300 and the Wrist Camera in the stack the
+# tool sits 55 mm further out, and that pose put grasp_frame at z=0.350 --
+# exactly the top face of the slab below, at x=0.256 inside its 0.24..0.36
+# span. Measured clearance of the nearest collision sphere to the slab was
+# -11 mm, i.e. the gripper started inside it. This pose clears by +140 mm with
+# the tool at z=0.550. The wrist joints are untouched, so the tool still
+# points down.
+HOME = [0.0, -1.8, 1.25, -1.383, -1.57, 0.0]
 
 # name, dims (full extents, m), pose [x, y, z, qw, qx, qy, qz], rgb
 # Deliberately sparse. An earlier version had a wall at z<=0.70 under a shelf
@@ -86,11 +94,11 @@ CUBE_SWEEP = {
 # A short sweep at startup so the map has content before the first plan.
 # Joint-space poses (rad), kept high and away from the table.
 SCAN_POSES = [
-    [ 0.00, -2.20,  1.90, -1.383, -1.57, 0.0],
-    [-0.55, -1.95,  1.60, -1.300, -1.57, 0.0],
-    [ 0.00, -1.80,  1.45, -1.250, -1.57, 0.0],
-    [ 0.55, -1.95,  1.60, -1.300, -1.57, 0.0],
-    [ 0.00, -2.20,  1.90, -1.383, -1.57, 0.0],
+    HOME,
+    [-0.55, -1.85,  1.35, -1.300, -1.57, 0.0],
+    [ 0.00, -1.70,  1.20, -1.250, -1.57, 0.0],
+    [ 0.55, -1.85,  1.35, -1.300, -1.57, 0.0],
+    HOME,
 ]
 
 # Cameras feeding the map, by name. Each says how its pose is obtained, and

@@ -411,18 +411,22 @@ rather than continuing if that check fails.
 
 ### Still open
 
-**A self-mask transient at startup, new since the wrist stack went on.** The
-FT 300 and Wrist Camera push the gripper 55 mm further out, which changes what
-the wrist camera sees of its own fingers during the opening scan. Measured over
-one full run: 35 consecutive plans failed with `6 inside the robot
-[left_inner_finger:1]`, then the frustum decay cleared them and the remaining
-89 plans all succeeded on a detour route with `0 on the robot`. It recovers by
-itself — the permanent deadlock is gone — but it did not happen before.
-`self_mask_margin` is 0.12, tuned for the old geometry. Raising it needs its
-own A/B: too generous and real obstacles get erased as they approach the
-gripper.
+Nothing blocking.
 
-Otherwise nothing blocking. The obstacle is still the 0.35 m low slab chosen when the
+A startup transient appeared when the wrist stack went on and was then fixed
+by raising `HOME`, which is worth recording because the two looked unrelated.
+The FT 300 and Wrist Camera push the tool 55 mm further out, which put
+`grasp_frame` at z=0.350 — exactly the top face of the demo slab — so the
+gripper started *inside* it, and the wrist camera spent the opening scan
+looking at its own fingers from a few centimetres away. Measured: 35
+consecutive plans failed with `6 inside the robot [left_inner_finger:1]` before
+frustum decay cleared them.
+
+Raising `HOME` to `[0, -1.8, 1.25, ...]` (clearance −11 mm → +140 mm, tool
+z 0.350 → 0.550) removed it entirely: 68 plans, **0 failures**, and `0 on the
+robot` in all 351 map reports. Worth knowing that `self_mask_margin` was the
+obvious suspect and would have been the wrong fix — the camera being too close
+to the fingers was the cause, not the margin being too tight. The obstacle is still the 0.35 m low slab chosen when the
 wrist camera's 0.40 m ceiling forced that shape; it gives a stable detour
 (section 7), so it has not been changed. Now that height is free, a taller or
 off-axis obstacle would be a more natural demo — that is a choice, not a fix.
@@ -510,6 +514,7 @@ Useful as regression baselines.
 | Map size, both cameras | 26 000–31 000 voxels after ~1000 frames, then flat |
 | Trajectory tracking error in sim | median 0.09°, 99th pct 0.44° (0.08–0.27 over 71 plans) |
 | Arm's travel corridor | z 0.4–0.6 m |
+| `HOME` tool height / obstacle clearance | z 0.550 m / +140 mm |
 | Wrist camera table footprint over a full cycle | x 0.30–0.45, y −0.45–+0.30 |
 | Overhead camera footprint at table level | x −0.27–+0.97, y −0.82–+0.82 |
 | Full demo, both cameras, 3610 frames | 71 plans, 0 failures, 69 detours, 0 self-hits |
