@@ -33,7 +33,11 @@ from .demo_cube import CAMERAS, DRAG_CUBE, HOME, MAPPER, SCAN_POSES
 PEDESTAL_H = 0.10
 PEDESTAL_TOP = PEDESTAL_H          # they stand on the table, whose top is z=0
 BLOCK_SIZE = 0.045
-PICK_XY = ((0.45, -0.25), (0.45, 0.25))
+# Moved out from +/-0.25 to +/-0.40 so the slab below has somewhere to stand.
+# At +/-0.25 there was no position for it that both blocked the route and left
+# the grasps alone: on the route it sat over the pedestals and every goal was
+# refused, off the route it did nothing.
+PICK_XY = ((0.45, -0.40), (0.45, 0.40))
 
 OBSTACLES = [
     ("table", [2.00, 2.00, 0.10], [0.00, 0.0, -0.06, 1, 0, 0, 0], (0.45, 0.47, 0.50)),
@@ -48,17 +52,34 @@ BLOCK = ("block", [BLOCK_SIZE] * 3,
          [PICK_XY[0][0], PICK_XY[0][1], PEDESTAL_TOP + BLOCK_SIZE / 2, 1, 0, 0, 0],
          (0.90, 0.70, 0.10), 0.15)
 
-# demo_cube's slab, same size, but NOT in the same place -- and that is not an
-# oversight to be tidied away by importing it whole. demo_cube moved its slab
-# to x = 0.42 because that is where its arm crosses between the targets; this
-# scene has pedestals at x = 0.45, so a slab there sits on top of the grasps.
-# Tried: every goal was refused, with voxels of the slab inside the gripper.
+# demo_cube's slab, same size, its own position -- and that is not an
+# oversight to be tidied away by importing it whole. The two scenes need it in
+# different places because their pedestals are in different places, and
+# importing it whole is exactly what broke this scene once.
 #
-# Here it stands between the pedestals at x = 0.30, out of the approach. On
-# the UR5 it is not expected to divert the route -- see demo_cube for why the
-# position matters so much -- and this scene is about the grasp, not the
-# detour.
-SLAB = ("drag_me", DRAG_CUBE[1], [0.30, 0.0, 0.175, 1, 0, 0, 0], DRAG_CUBE[3])
+# Chosen by sweeping pedestal y against slab x and measuring both things that
+# matter: how far the route, planned WITHOUT the slab, runs into it, and how
+# much room is left around the grasp once the cameras have put it in the map.
+# They pull against each other -- with the pedestals at their old +/-0.25 no
+# slab position satisfied both:
+#
+#     ped y   slab x |  route   pre-grasp  at block
+#      0.25     0.30 |  +25.4      +42.9     +17.2   route misses it
+#      0.25     0.42 |  -28.5       -1.0     -26.2   fouls the grasp
+#      0.38     0.42 |  -14.0      +97.0     +43.0   both
+#      0.40     0.46 |  -18.6     +116.4     +57.0   both, with room
+#
+# Then the height, at that position. 0.35 only reached the short approach
+# legs; the long traverse between the pedestals cleared it by 116 mm either
+# way, so the big visible motion was not avoiding anything:
+#
+#     height |  route   pre-grasp  at block
+#       0.35 |  -18.6     +116.4     +57.0
+#       0.42 |  -20.2      +89.9     +31.5
+#       0.46 |  -40.3      +59.2     +31.0   <- this
+#       0.50 |  -46.6      +37.1     +31.0   grasp room getting thin
+SLAB = ("drag_me", [DRAG_CUBE[1][0], DRAG_CUBE[1][1], 0.46],
+        [0.46, 0.0, 0.23, 1, 0, 0, 0], DRAG_CUBE[3])
 
 DESCEND = 0.125
 
