@@ -104,6 +104,25 @@ class Mapping:
         # the lens, so a few of its pixels survive the mask, get fused, and then
         # the robot's own start state reads as in-collision -- after which every
         # plan fails. 0.12 clears the arm's immediate surroundings.
+        # A camera that derives its pose by forward kinematics needs its frame
+        # to actually be one. Without this the failure is a KeyError on
+        # tool_poses[...] inside the first integrate, several seconds into a
+        # run, naming a dict rather than the problem. The common way to hit it
+        # is a mapping scene with --robot ur5e: camera_link only exists in the
+        # 2F-85 URDF.
+        missing = {
+            name: spec["link"] for name, spec in cameras.items()
+            if "link" in spec and spec["link"] not in kin.tool_frames
+        }
+        if missing:
+            named = ", ".join(f"{n} wants {l!r}" for n, l in missing.items())
+            raise SystemExit(
+                f"[planner] this robot has no frame for: {named}.\n"
+                f"[planner] Its tool_frames are {list(kin.tool_frames)}.\n"
+                f"[planner] A camera's \"link\" must be one of those -- add it to "
+                f"tool_frames in the robot config, or run a robot that has it."
+            )
+
         self.rigs = {}
         for cam_name, spec in cameras.items():
             self.rigs[cam_name] = {
