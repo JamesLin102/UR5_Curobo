@@ -17,19 +17,34 @@ the two targets exists only in the simulator; the planner's world contains a
 table and nothing else. The arm routes around it anyway, because the cameras
 put it in the map.
 
+**On the UR5e this worked and was the whole point of the repo.** Forward
+kinematics over the unmapped trajectory put the arm's own collision spheres
+10 mm *inside* the obstacle; with the cameras on it took a 121-waypoint detour
+instead, 43 cycles running, zero failures. [HANDOVER.md](HANDOVER.md) §7–8 has
+those numbers.
+
+**On the UR5 it does not, and the reason is not a regression.** Re-measured,
+120 s of planning a row:
+
 | | trajectory |
 |---|---|
-| `--no-mapping` | 81 waypoints — straight through the obstacle |
-| mapping on | 121 waypoints — around it, 43 cycles running, 0 failures |
+| `--no-mapping` | `101` then **81 × 86**, 0 failures |
+| `baseline`, mapping on | `101` then **81 × 41**, 0 failures |
+| `demo_cube`, mapping on | `101` then **81 × 41**, 0 failures, 239 voxels inside the obstacle |
 
-Confirmed three ways, including forward kinematics over the no-map trajectory
-showing the arm's own collision spheres passing 10 mm inside the obstacle that
-cuRobo considered collision-free. [HANDOVER.md](HANDOVER.md) §7–8 has the
-numbers.
+The obstacle is seen — it is in the map, in the right place — and the route
+does not change, because on this arm the route was never going to hit it. FK
+over the unmapped trajectory clears the slab by **+46.9 mm** (the gripper,
+level with its top face and 63 mm past its +x side) and **+65.5 mm** (the upper
+arm, 118 mm past its −x side). The CB3 shoulder sits 73 mm lower than the
+e-Series one, so the same two targets are reached in a different posture, over
+and around the slab rather than through it.
 
-Those two numbers were measured on the **UR5e** model, before the swap. The UR5
-runs all three scenes — the per-scene numbers below are its — but that
-particular A/B has not been repeated on it.
+So `demo_cube`'s obstacle needs re-tuning for this arm before it demonstrates
+anything, and that is a measured exercise rather than a guess — HANDOVER §7
+*Obstacle size* records how it was tuned the first time, and the constraint
+that makes it awkward: the cameras only map to about z = 0.40, so the obstacle
+cannot simply be made taller.
 
 ---
 

@@ -408,6 +408,40 @@ route instead of the 81-waypoint one, and not one plan failed.
 
 It used to block instead — see the marker bug below, which was the real cause.
 
+#### Re-measured on the UR5 (2026-09-22): the detour is gone
+
+Same scene, same three rows, 120 s of planning each:
+
+| | trajectory (waypoints) |
+|---|---|
+| `--no-mapping` | `101` then **81 × 86**, 0 failures |
+| no obstacle, mapping on | `101` then **81 × 41**, 0 failures |
+| mapping on | `101` then **81 × 41**, 0 failures |
+
+All three identical. The obstacle is not missing from the map — the server
+reports 723 voxels with 239 of them inside `drag_me`, spanning z 0.01..0.34,
+which is the slab. Mapping is working and changing nothing.
+
+The reason is the arm, and it is measurable. FK over the *unmapped*
+trajectory, which on the UR5e passed 10 mm inside the slab:
+
+```
+target[0]  101 waypoints, closest approach +46.9 mm  (right finger, x 0.423,
+           63 mm past the slab's +x face, level with its top at z 0.348)
+target[1]   81 waypoints, closest approach +65.5 mm  (upper arm, x 0.122,
+           118 mm past the slab's -x face)
+```
+
+The route goes over and around the slab rather than through it. A CB3 shoulder
+sits at z = 89 mm against the e-Series' 162.5, so the same two targets are
+reached in a different posture.
+
+**`demo_cube`'s obstacle therefore has to be re-tuned before the demo
+demonstrates anything on this arm**, and the tuning below is the record of how
+awkward that is: the cameras only map to roughly their own altitude, ~0.40 m,
+so the slab cannot just be made taller; and the targets sit at x = 0.45, so it
+cannot grow far in +x either without putting the goals inside it.
+
 ### Visualisation markers must never reach the depth image
 
 The two `TARGETS` markers are `VisualCuboid`s showing where the tool is being
