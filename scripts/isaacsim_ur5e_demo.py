@@ -198,6 +198,29 @@ PINNED_FOLLOWER = "inner_knuckle_joint"
 #
 # Monotonic, and nothing else moved it: solver iterations (64, 255) changed it
 # by 0.000, and driving two joints instead of four by 0.005.
+PLANNED_JOINTS = ("shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
+                  "wrist_1_joint", "wrist_2_joint", "wrist_3_joint")
+
+# The importer's own stiffness, kept; the damping it does NOT give.
+#
+# A position drive with no damping is an undamped spring, and it rings around
+# a moving target: during a 12 cm vertical move the joints that were told to
+# hold still buzzed instead, reversing direction 37-47 times, and the two that
+# were moving ran in surges rather than at speed. Measured over that move, as
+# velocity sign flips across all six joints and the velocity ripple on
+# wrist_1:
+#
+#     damping    0 -> 138 flips, ripple 0.48, lag  8 mrad
+#               20 ->  19 flips, ripple 0.13, lag  9 mrad
+#               50 ->   0 flips, ripple 0.19, lag 22 mrad
+#              150 ->   0 flips, ripple 0.20, lag 66 mrad
+#
+# 20 is the knee: the joints that should not move stop moving (|v| max
+# 0.00 rad/s, the remaining flips are noise below 0.005), and it costs almost
+# nothing in tracking. 50 buys only sub-visible noise for four times the lag.
+ARM_DRIVE_STIFFNESS = 625.0
+ARM_DRIVE_DAMPING = 20.0
+
 GRIPPER_DRIVE_STIFFNESS = 1.0e2
 GRIPPER_DRIVE_DAMPING = 1.0e1
 
@@ -329,6 +352,28 @@ def close_gripper_linkage(stage, prim_path):
     return made
 
 
+def tune_arm_drives(stage, joints):
+    """Give the arm's position drives some damping. They ship with none.
+
+    Isaac Sim 5.x ignores the importer's default_drive_strength and
+    default_position_drive_damping entirely -- every joint comes out at
+    stiffness 625 and damping 0 whatever is asked for. An undamped position
+    drive rings around a moving target, which is what makes a slow vertical
+    move judder.
+    """
+    k, d = ARM_DRIVE_STIFFNESS, ARM_DRIVE_DAMPING
+    n = 0
+    for prim in stage.Traverse():
+        if prim.GetName() not in joints:
+            continue
+        drive = UsdPhysics.DriveAPI.Get(prim, "angular")
+        if drive:
+            drive.CreateStiffnessAttr().Set(k)
+            drive.CreateDampingAttr().Set(d)
+            n += 1
+    print(f"[demo] arm drives: {n} at stiffness {k:g}, damping {d:g}")
+
+
 def tune_gripper_drives(stage, prim_path, joints):
     """Soften the gripper's drives, and release the ones the pin owns.
 
@@ -380,6 +425,10 @@ def build_stage(world):
     cfg.create_physics_scene = False
     cfg.distance_scale = 1.0
     cfg.default_drive_type = UrdfJointTargetType.JOINT_DRIVE_POSITION
+    # These two are DEAD in Isaac Sim 5.x. Whatever they are set to, every
+    # joint comes out at stiffness 625 and damping 0 -- verified by reading
+    # the DriveAPI back after import at 1e6 and at 1e5, identical both times.
+    # tune_arm_drives() below is what actually sets the gains.
     cfg.default_drive_strength = 1e6
     cfg.default_position_drive_damping = 1e5
     status, prim_path = omni.kit.commands.execute(
@@ -433,6 +482,7 @@ def build_stage(world):
         )
 
     close_gripper_linkage(world.stage, prim_path)
+    tune_arm_drives(world.stage, set(PLANNED_JOINTS))
     tune_gripper_drives(world.stage, prim_path,
                         set(ROBOTS[ARGS.robot].get("gripper_joints") or {}))
 
@@ -919,6 +969,15 @@ def main():
             print(f"[demo]   no IK for z{dz:+.3f} m; skipping")
             return False
         start = q_now()
+        # A 12 cm vertical move is a small joint move. If it is not, the IK
+        # came back on a different branch from the one the arm is standing in,
+        # and blending straight to it sweeps the arm through that difference
+        # instead of going down.
+        step = [abs(b - a) for a, b in zip(start, q_goal)]
+        print(f"[demo]   z{dz:+.3f}: joint travel "
+              f"{' '.join(f'{v:.3f}' for v in step)} rad"
+              f"   worst {max(step):.3f} over {n_steps} steps "
+              f"({max(step) / (n_steps * SIM_DT):.2f} rad/s)")
         for i in range(n_steps):
             if not simulation_app.is_running():
                 return False
