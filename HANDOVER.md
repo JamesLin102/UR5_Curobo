@@ -8,8 +8,9 @@ it.
 **The robot changed on 2026-09-22.** It was a UR5e with a hand-assembled wrist
 stack; it is now a UR5 (CB3) with a vendored one. Sections written before that
 still say "UR5e" where the reasoning is about the arm in general; §11 is the
-conversion and everything it broke, and is the place to start if something in
-an older section does not match what you see.
+conversion and everything it broke, §12 is putting the demo back on its feet
+afterwards, and those two are the place to start if something in an older
+section does not match what you see.
 
 ---
 
@@ -436,11 +437,10 @@ The route goes over and around the slab rather than through it. A CB3 shoulder
 sits at z = 89 mm against the e-Series' 162.5, so the same two targets are
 reached in a different posture.
 
-**`demo_cube`'s obstacle therefore has to be re-tuned before the demo
-demonstrates anything on this arm**, and the tuning below is the record of how
-awkward that is: the cameras only map to roughly their own altitude, ~0.40 m,
-so the slab cannot just be made taller; and the targets sit at x = 0.45, so it
-cannot grow far in +x either without putting the goals inside it.
+**`demo_cube`'s obstacle therefore had to be re-tuned**, and it was — see §12.
+Short version: the height was never the lever, the position was. The arm
+crosses between the targets around x = 0.45, not x = 0.30, and moved there the
+slab's original 0.35 m height runs into the route by 20.2 mm.
 
 ### Visualisation markers must never reach the depth image
 
@@ -705,6 +705,17 @@ they have been re-measured, and says which have not.
 | Overhead camera footprint at table level | x −0.27–+0.97, y −0.82–+0.82 |
 | Full demo, both cameras, 3610 frames | 71 plans, 0 failures, 69 detours, 0 self-hits |
 
+UR5 equivalents, after §11 and §12:
+
+| | |
+|---|---|
+| Planning (2F-85 + live voxel map) | 47–56 ms, 81 waypoints |
+| `demo_cube` | 36–49 plans, 0 failures; −20 mm into the slab unmapped, −2..+11 mapped |
+| `pick_place` | 19 plans, 0 failures; grasp settles in 35–43 steps; block on [0.450, ±0.400] |
+| `baseline` | 33 plans, 0 failures, 0 voxels (the table is out of the map) |
+| Map size, both cameras | 340–700 voxels — the obstacle, and nothing else |
+| `HOME` tool height / obstacle clearance | z 0.546 m / +59.5 mm (pick_place), +168.8 (demo_cube) |
+
 First call of anything Warp-backed includes JIT compilation — ESDF's first call
 is ~450 ms, then 1 ms. Do not benchmark cold.
 
@@ -866,9 +877,151 @@ baseline    28 plans, 0 failures, 0 voxels (the table is out of the map)
 
 Known and not fixed: the gripper rests at 0.028 rad rather than 0, so the real
 gripper opens ~3 mm narrower than the planner's locked-open model (safe
-direction); `settle_gripper` reports `TIMED OUT` on a grasp that is holding
-perfectly well, because its idea of "stopped" is stricter than it needs to be;
-and the 81-vs-121-waypoint A/B in the README was measured on the UR5e and has
-not been repeated.
+direction); and `settle_gripper` reports `TIMED OUT` on a grasp that is
+holding perfectly well, because its idea of "stopped" is stricter than it
+needs to be.
+
+The 81-vs-121-waypoint A/B was repeated on the UR5 and did not hold; §12 is
+what came of that, including why waypoint count was the wrong thing to be
+measuring in the first place.
 
 [eugene900805/mir_ur5_humble]: https://github.com/eugene900805/mir_ur5_humble
+
+---
+
+## 12. Making the demo demonstrate something again (2026-09-23)
+
+§11 left `demo_cube` in a state where the cameras mapped the obstacle
+correctly and the route ignored it, because on a CB3 the route was never going
+to hit it. Fixing that turned up two more faults and one mistake of my own.
+
+### Height was never the lever; position was
+
+The obvious move is to make the slab taller until it reaches the route. It
+works and it is wrong. Counting the route's own collision spheres by x band:
+
+```
+x 0.20..0.30:   500 spheres      x 0.42..0.48:  6116
+x 0.30..0.38:  1250              x 0.48..0.55:  4677
+x 0.38..0.42:  1939
+```
+
+The arm crosses between the targets around x = 0.45. From x = 0.30 it took
+0.48 m of height to touch the route at all, and at that height the corridor
+left over was 16 mm wide: the arm diverted, parked itself against the slab and
+could not plan out again, sticking permanently after about 14 cycles. At
+x = 0.42 the ORIGINAL 0.35 m height penetrates the route by 20.2 mm and leaves
+the goals 145 mm clear.
+
+### Waypoint count is a bad proxy, and it cost most of the search
+
+The 81-vs-121 result that this repo was built on measures trajectory length.
+A detour can come back the same length, and with the slab in its new place
+every plan is 81 waypoints whether the cameras see it or not. `handle_plan`
+now reports the closest the plan comes to each body the planner was never told
+about — reporting only, nothing there reaches the planner:
+
+```
+demo_cube   --no-mapping   60 plans, all -20 mm
+            mapping on     49 plans, 0 failures: one -20 (no map yet),
+                           35 between -2 and 0, 14 between +3 and +11
+```
+
+It goes from 20 mm through the slab to skimming it, not to clearing it: the
+mapped top sits at z = 0.34 against the real 0.35, and the planner clears what
+it was shown.
+
+### Removing the base's spheres broke self-masking
+
+The base spheres had to go so the planner would stop calling the robot in
+collision (§11 fault 5). RobotSegmenter masks the cameras with those same
+spheres, so the cameras then mapped the robot's own base: 13 700 of the map's
+14 000 voxels sat between z = 0.02 and 0.15, which is the base (0..0.024) and
+the shoulder (0.024..0.157), permanently occupying the space the arm has to
+pass through. It took the demo from 0 failures to 74.
+
+The self-hit check could not see it. It counts occupied voxels inside the
+robot's collision spheres, so the one link whose spheres were removed is
+invisible to it: it reported "0 on the robot" throughout.
+
+Both halves are needed and they conflict, so they are separated. The spheres
+live in the config for the segmenter; `planner_server.build()` drops them from
+the planner's copy (`SEGMENTER_ONLY`). Removing either half puts the demo back
+in a state that looks like a different bug.
+
+### self_mask_margin 0.12 -> 0.18
+
+0.12 was enough while the arm shuttled along a fixed route and not enough once
+it started detouring — the mask began missing, and that leak is what the 74
+failures above were. 0.18 took it back to 6, and the base-sphere fix took the
+rest.
+
+### pick_place needed its own layout, not demo_cube's
+
+Its slab was de-duplicated into demo_cube's, which moved it onto this scene's
+pedestals and made every goal unreachable. Reverted: the size is shared, the
+position is not.
+
+Then it needed a layout of its own, because with the pedestals at their
+original +/-0.25 there is no slab position that both blocks the route and
+leaves the grasps alone. Swept, in mm:
+
+```
+ped y   slab x |  route   pre-grasp  at block
+ 0.25     0.30 |  +25.4      +42.9     +17.2   route misses it
+ 0.25     0.42 |  -28.5       -1.0     -26.2   fouls the grasp
+ 0.38     0.42 |  -14.0      +97.0     +43.0   both
+ 0.40     0.46 |  -18.6     +116.4     +57.0   both, with room
+```
+
+So the pedestals moved out to +/-0.40. The height then had to go to 0.46,
+because at 0.35 the only legs the slab reached were the short approaches --
+the long traverse between pedestals, which is the big visible motion, cleared
+it by 116 mm whether the cameras saw it or not. Measured end to end:
+
+```
+mapping off   -40 -41 -20 +59 -20 +112 -20 +59 -20 +112 ...
+mapping on    -40  +4  -4 +59  +6 +112  -3 +59  +6 +112 ...
+```
+
+The +59 and +112 legs are identical either way. That is the honest part: they
+were never near it.
+
+### Retracting a rest pose makes the working poses MORE extended
+
+With the taller slab, `HOME` cleared it by 11 mm -- visible on screen -- and
+two of the scan poses were 14 mm INSIDE it, so the startup sweep ran the arm
+through the obstacle it was scanning for. That one was not visible at all.
+
+The fix is elbow in, wrist_1 back out, so each pose keeps its orientation and
+simply sits further back and higher. 0.20 rad was the first attempt and broke
+planning completely -- 217 of 218 plans blocked, goals reachable throughout --
+because an arm that starts further back reaches the pedestals more extended,
+and its upper arm ends up 15 mm off the mapped slab and strands itself. 0.15
+is the most that clears every pose without that:
+
+```
+                  demo_cube   pick_place
+HOME     before     +121.2       +11.2
+         after      +168.8       +59.5
+scan[1]  before      +93.5       -14.0
+         after      +126.1       +21.7
+scan[2]  before      +98.5       -14.2
+         after      +130.8       +20.8
+```
+
+### Where it stands
+
+```
+demo_cube   36-49 plans, 0 failures, 51 ms a plan
+pick_place  19 plans, 0 failures, block shuttling between [0.450, +/-0.400]
+baseline    33 plans, 0 failures, 0 voxels
+```
+
+Unexplained and worked around rather than understood: with the tall slab at
+x = 0.30, the map grew a band of ~10 000 voxels spanning x +0.24..+1.36,
+y -0.90..+1.00 at z 0.02..0.10 -- far wider than the robot or the table --
+that the floor filter demonstrably was not letting through (it cut
+224 676 of 226 310 overhead pixels). Raising `floor_z` to 0.12 removed it. It
+has not reappeared with the slab in its final position and `floor_z` back at
+0.02, so it is recorded here rather than chased.

@@ -17,34 +17,42 @@ the two targets exists only in the simulator; the planner's world contains a
 table and nothing else. The arm routes around it anyway, because the cameras
 put it in the map.
 
-**On the UR5e this worked and was the whole point of the repo.** Forward
-kinematics over the unmapped trajectory put the arm's own collision spheres
-10 mm *inside* the obstacle; with the cameras on it took a 121-waypoint detour
-instead, 43 cycles running, zero failures. [HANDOVER.md](HANDOVER.md) §7–8 has
-those numbers.
+**Measured as the closest the plan comes to that obstacle**, not as the
+trajectory's length. Length is a bad proxy and it misled this repo for a while:
+a detour can come back the same number of waypoints, and does. The planner
+server reports the real thing on every plan — reporting only, nothing there
+reaches the planner:
 
-**On the UR5 it does not, and the reason is not a regression.** Re-measured,
-120 s of planning a row:
-
-| | trajectory |
+| `demo_cube`, 120 s a row | closest approach to the obstacle |
 |---|---|
-| `--no-mapping` | `101` then **81 × 86**, 0 failures |
-| `baseline`, mapping on | `101` then **81 × 41**, 0 failures |
-| `demo_cube`, mapping on | `101` then **81 × 41**, 0 failures, 239 voxels inside the obstacle |
+| `--no-mapping` | 60 plans, **all −20 mm** — straight through it |
+| mapping on | 49 plans, 0 failures: one −20 (before the map exists), 35 between −2 and 0, 14 between +3 and +11 |
 
-The obstacle is seen — it is in the map, in the right place — and the route
-does not change, because on this arm the route was never going to hit it. FK
-over the unmapped trajectory clears the slab by **+46.9 mm** (the gripper,
-level with its top face and 63 mm past its +x side) and **+65.5 mm** (the upper
-arm, 118 mm past its −x side). The CB3 shoulder sits 73 mm lower than the
-e-Series one, so the same two targets are reached in a different posture, over
-and around the slab rather than through it.
+The first plan of a mapped run is always the unmapped one, because the map does
+not exist yet. That single number flipping from −20 to positive, and staying
+there, is the demonstration.
 
-So `demo_cube`'s obstacle needs re-tuning for this arm before it demonstrates
-anything, and that is a measured exercise rather than a guess — HANDOVER §7
-*Obstacle size* records how it was tuned the first time, and the constraint
-that makes it awkward: the cameras only map to about z = 0.40, so the obstacle
-cannot simply be made taller.
+Honest about the margin: with the cameras on it goes from 20 mm *through* the
+slab to skimming its surface, not clearing it by a comfortable distance. The
+mapped top sits at z = 0.34 against the real 0.35 — voxel sampling — and the
+planner clears what it was shown.
+
+**The obstacle had to be moved for this arm**, and that is not a regression.
+It diverted the UR5e from x = 0.30 and did nothing at all to the UR5: the
+unmapped route cleared it by +46.9 mm and +65.5 mm, and every row of the A/B
+came out at 81 waypoints. The CB3 shoulder sits 73 mm lower than the e-Series
+one, so the same two targets are reached in a different posture. Counting the
+route's own collision spheres by x band says where it actually goes:
+
+```
+x 0.20..0.30:   500 spheres      x 0.42..0.48:  6116
+x 0.30..0.38:  1250              x 0.48..0.55:  4677
+x 0.38..0.42:  1939
+```
+
+The arm crosses between the targets around x = 0.45, not x = 0.30. Moved
+there, its ORIGINAL height penetrates the route by 20.2 mm. Making it taller
+where it stood was the obvious move and the wrong one — see HANDOVER §11.
 
 ---
 
@@ -111,9 +119,16 @@ URDF, and the bare `ur5e` has no camera to map with.
 
 | scene | what it is | measured on the UR5 |
 |---|---|---|
-| `demo_cube` | the shipped demo — one slab the cameras have to discover | 81 waypoints, 51 ms a plan, 683 voxels of obstacle |
-| `pick_place` | a block shuttled between two pedestals, past that slab | grasp settles in 35 steps, block lands on ±0.250 |
-| `baseline` | the same cell with nothing to discover — the control run | 28 plans, 0 failures, **0 voxels** |
+| `demo_cube` | the shipped demo — one slab the cameras have to discover | 36–49 plans, 0 failures, 51 ms a plan; −20 mm into the slab unmapped, −2..+11 mapped |
+| `pick_place` | a block shuttled between two pedestals, past that slab | 19 plans, 0 failures; grasp settles in 35–43 steps, block lands on [0.450, ±0.400] |
+| `baseline` | the same cell with nothing to discover — the control run | 33 plans, 0 failures, **0 voxels** |
+
+The two slabs are the same size and in **different places**, and that is
+deliberate rather than an oversight waiting to be tidied away: `demo_cube`
+needs its obstacle on the route, `pick_place` needs its own not to sit on the
+grasps. Importing one into the other was tried and made every goal in
+`pick_place` unreachable. `pick_place` also had to move its pedestals out to
+±0.40 to leave anywhere for a slab to stand.
 
 `baseline` answers one question: with nothing to discover, is the rig healthy?
 Run it when plans start failing and you need to know whether the obstacle is
@@ -146,6 +161,11 @@ SCENE = SceneSpec(
     motions={...},     # how an unmapped body moves
 )
 ```
+
+**`mapper["self_mask_margin"]` is 0.18, not 0.12.** 0.12 is enough while the
+arm shuttles along a fixed route and not enough once it starts detouring: the
+mask began missing, the arm mapped itself, and the demo went from 0 failures
+to 74.
 
 **`mapper["floor_z"]`: do not map what the planner already knows exactly.**
 Depth below that height is dropped before fusion. The table is a cuboid in
@@ -289,6 +309,16 @@ the demo set the gains after import, which is the only place that works.
 at 0.028 rad rather than 0, so the real gripper opens about 3 mm narrower than
 the planner's locked-open model. That direction is safe — the planner believes
 the gripper is wider than it is — but it is a discrepancy, not a rounding.
+
+**Some collision spheres exist only for the cameras.** The base's spheres are
+in the config and are *removed from the planner's copy* by `planner_server`,
+because both halves are needed and they conflict: the segmenter masks the
+robot out of the depth using those spheres, so a base without them is a base
+the cameras MAP — 13 700 voxels of it, sitting permanently where the shoulder
+and forearm have to pass — while a planner that checks them calls the robot in
+collision in every configuration, since the base is bolted to the table. The
+self-hit diagnostic cannot see this on its own: it counts voxels inside the
+robot's spheres, so the one link without spheres is invisible to it.
 
 **`settle_gripper` occasionally reports `TIMED OUT, still moving`.** Its idea of
 "stopped" is stricter than it needs to be, so a grasp that is holding perfectly
