@@ -20,7 +20,20 @@ from .base import SceneSpec, WatchBox
 # -11 mm, i.e. the gripper started inside it. This pose clears by +140 mm with
 # the tool at z=0.550. The wrist joints are untouched, so the tool still
 # points down.
-HOME = [0.0, -1.8, 1.25, -1.383, -1.57, 0.0]
+# RETRACTED AGAIN (2026-09-23) for pick_place's taller slab. The elbow comes
+# in 0.15 rad and wrist_1 gives it back, so the tool keeps pointing the same
+# way and simply sits further back and higher: [421, 109, 491] -> [386, 109,
+# 546] mm. Clearance to the slab, which is what this is about:
+#
+#                       demo_cube   pick_place
+#     before              +121.2       +11.2   <- grazing it
+#     after               +168.8       +59.5
+#
+# 0.20 rad was tried first and is too much: pulled that far back the arm
+# reaches the pedestals more extended, its upper arm ends up 15 mm off the
+# mapped slab, and it strands itself -- 217 plans blocked out of 218. 0.15 is
+# the most that leaves every pose clear without doing that.
+HOME = [0.0, -1.8, 1.10, -1.233, -1.57, 0.0]
 
 # name, dims (full extents, m), pose [x, y, z, qw, qx, qy, qz], rgb
 # Deliberately sparse. An earlier version had a wall at z<=0.70 under a shelf
@@ -118,11 +131,17 @@ CUBE_SWEEP = {
 
 # A short sweep at startup so the map has content before the first plan.
 # Joint-space poses (rad), kept high and away from the table.
+# Retracted with HOME, and for a worse reason: two of these did not graze the
+# slab, they went 14 mm INSIDE it, so the startup scan swept the arm through
+# the obstacle it was scanning for. Same elbow -0.20 / wrist_1 +0.20, so each
+# pose still looks the same way, from further back.
+#
+#     pick_place clearance    scan[1] -14.0 -> +21.7    scan[2] -14.2 -> +20.8
 SCAN_POSES = [
     HOME,
-    [-0.55, -1.85,  1.35, -1.300, -1.57, 0.0],
-    [ 0.00, -1.70,  1.20, -1.250, -1.57, 0.0],
-    [ 0.55, -1.85,  1.35, -1.300, -1.57, 0.0],
+    [-0.55, -1.85,  1.20, -1.150, -1.57, 0.0],
+    [ 0.00, -1.70,  1.05, -1.100, -1.57, 0.0],
+    [ 0.55, -1.85,  1.20, -1.150, -1.57, 0.0],
     HOME,
 ]
 
