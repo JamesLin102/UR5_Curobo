@@ -21,15 +21,25 @@ that touches them must run after launch().
 import math
 import os
 import sys
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Optional
 
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import scenes  # noqa: E402
 from planner_client import Planner  # noqa: E402
-from rig import DEFAULT_ROBOT, ROBOTS, SIM_DT  # noqa: E402
+from rig import ROBOTS, SIM_DT  # noqa: E402
+# The pieces both simulator backends share. Re-exported under their old names,
+# so `from sim_env import EnvCfg, frame_prim, ...` keeps working.
+from cell_api import (GRIP_EXTRA_STEPS, HOLDING_RADIUS, MOVE_Z_STEPS,  # noqa: E402,F401
+                      SCAN_BLEND_STEPS, SCAN_STEPS, SETTLE_MAX_STEPS,
+                      SETTLE_QUIET_STEPS, SETTLE_TOL, EnvCfg, GripResult,
+                      MoveResult, Observation, ResetOptions)
+from sim_usd import (GRIP_MATERIAL, GRIP_MATERIAL_PATH,  # noqa: E402,F401
+                     GRIPPER_PIN_AXIS, LINKAGES, apply_linkage, bind_pad_material,
+                     close_gripper_linkage, draw_targets, frame_prim)
+from urdf_frames import (OPTICAL_TO_ROS_BODY, gripper_pin_anchors,  # noqa: E402,F401
+                         matrix_to_quat, quat_to_matrix, urdf_tree)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -64,175 +74,7 @@ def launch(headless=False, width=1600, height=900):
     return _APP
 
 
-# --- the Robotiq 2F-85's loop closure (gripper "linkage": "robotiq_2f85") ----
-#
-# The numbers for the arm and gripper -- drive gains, which joints the pin
-# owns, pad geometry -- live in rig.ROBOTS with the measurements behind them.
-# What stays here is code that only makes sense for this mechanism.
-#
-# The 2F-85 is two mirrored 4-bar linkages. A 4-bar needs a loop closure, and
-# URDF is a tree, so in the model the inner knuckle hangs off the base as its
-# own branch with nothing tying it to the finger tip. Under load the branches
-# stall at different angles -- measured 0.22 rad apart within one side while
-# gripping -- and the linkage visibly comes apart.
-#
-# USD is not a tree, so the pin can be added back here.
-#
-# Where the pin goes is READ OFF THE URDF rather than measured off the meshes.
-# The mechanism is a parallelogram: the coupler's mimic multipliers are
-# knuckle +1, finger_tip -1, so the finger tip's absolute orientation stays
-# fixed, which is a parallelogram's defining property. With pivots
-#
-#     A = knuckle joint          C = finger_tip joint  (in base coords at 0)
-#     B = inner_knuckle joint    D = the missing pin
-#
-# a parallelogram gives D = B + (C - A) exactly. No mesh fitting, no closest-
-# surface-point search, and it stays right if the URDF is regenerated.
-GRIPPER_PIN_AXIS = "Y"      # every 2F-85 joint turns about this link's Y
-
-
-def _gripper_pin_anchors(urdf_path):
-    """Pin anchors, per side, in the inner knuckle's and finger tip's frames.
-
-    Returns {side: ((x, y, z) on inner_knuckle, (x, y, z) on finger_tip)}.
-    """
-    import xml.etree.ElementTree as ET
-
-    root = ET.parse(urdf_path).getroot()
-    origin = {}
-    for j in root.findall("joint"):
-        o = j.find("origin")
-        xyz = (o.get("xyz") if o is not None else None) or "0 0 0"
-        origin[j.get("name")] = np.array([float(v) for v in xyz.split()])
-
-    out = {}
-    for side in ("left", "right"):
-        p = f"robotiq_85_{side}_"
-        try:
-            A = origin[p + "knuckle_joint"]
-            B = origin[p + "inner_knuckle_joint"]
-            # C is the finger tip's pivot in BASE coordinates, so walk the
-            # chain: the finger is fixed to the knuckle, the tip to the finger.
-            C = A + origin[p + "finger_joint"] + origin[p + "finger_tip_joint"]
-        except KeyError as missing:
-            raise RuntimeError(
-                f"{urdf_path} has no {missing}; the 4-bar cannot be closed")
-        D = B + (C - A)
-        out[side] = (D - B, D - C)
-    return out
-
-
-_URDF_TREES = {}
-
-
-def _urdf_tree(urdf):
-    """child link -> (parent link, 4x4 transform), for the whole URDF."""
-    if urdf not in _URDF_TREES:
-        import xml.etree.ElementTree as ET
-
-        def rpy(r, p, y):
-            cr, sr, cp, sp, cy, sy = (math.cos(r), math.sin(r), math.cos(p),
-                                      math.sin(p), math.cos(y), math.sin(y))
-            return np.array([[cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
-                             [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
-                             [-sp, cp * sr, cp * cr]])
-
-        tree = _URDF_TREES[urdf] = {}
-        for j in ET.parse(urdf).getroot().findall("joint"):
-            o = j.find("origin")
-            T = np.eye(4)
-            if o is not None:
-                T[:3, 3] = [float(v) for v in (o.get("xyz") or "0 0 0").split()]
-                T[:3, :3] = rpy(*[float(v) for v in (o.get("rpy") or "0 0 0").split()])
-            tree[j.find("child").get("link")] = (j.find("parent").get("link"), T)
-    return _URDF_TREES[urdf]
-
-
-def frame_prim(stage, prim_path, link, urdf):
-    """Prim path for `link`, recreating it if merge_fixed_joints ate it.
-
-    Merging keeps a prim for every link that carries geometry and discards the
-    pure frames. Walk up the URDF to the nearest link that does have a prim,
-    carry the transform along, and hang an Xform there. An Xform under a rigid
-    body is just a frame -- it adds nothing for PhysX to solve, which is the
-    whole point of having merged in the first place.
-
-    Some merged frames are NOT discarded: the importer keeps them as an Xform
-    child of the body they were merged into, with the joint's transform
-    already on it -- grasp_frame comes out as robotiq_85_base_link/grasp_frame
-    carrying its 0.130 m translate. Such a prim is used as it is. Defining it
-    again and adding the chain's transform stacked a second copy of that
-    offset on top, and the tool read 0.13 m past where it was.
-
-    Returns (path of `link`, path of the body it was merged into).
-    """
-    if stage.GetPrimAtPath(f"{prim_path}/{link}").IsValid():
-        return f"{prim_path}/{link}", f"{prim_path}/{link}"
-    tree = _urdf_tree(urdf)
-    # Kept by the importer under some ancestor body? Then it is already right.
-    node = link
-    while node in tree:
-        parent = tree[node][0]
-        kept = f"{prim_path}/{parent}/{link}"
-        if stage.GetPrimAtPath(kept).IsValid():
-            return kept, f"{prim_path}/{parent}"
-        node = parent
-    T, node = np.eye(4), link
-    while node in tree:
-        parent, M = tree[node]
-        T = M @ T
-        if stage.GetPrimAtPath(f"{prim_path}/{parent}").IsValid():
-            host = f"{prim_path}/{parent}"
-            xf = UsdGeom.Xform.Define(stage, f"{host}/{link}")
-            R, t = T[:3, :3], T[:3, 3]
-            # USD multiplies row vectors, so its matrix is the transpose of
-            # this one with the translation along the bottom row.
-            xf.AddTransformOp().Set(Gf.Matrix4d(
-                float(R[0][0]), float(R[1][0]), float(R[2][0]), 0.0,
-                float(R[0][1]), float(R[1][1]), float(R[2][1]), 0.0,
-                float(R[0][2]), float(R[1][2]), float(R[2][2]), 0.0,
-                float(t[0]), float(t[1]), float(t[2]), 1.0))
-            return f"{host}/{link}", host
-        node = parent
-    raise RuntimeError(f"{link} is not in {urdf}, or has no ancestor with a prim")
-
-
-def close_gripper_linkage(stage, prim_path, urdf):
-    """Pin each inner knuckle to its finger tip, closing the 4-bar in PhysX.
-
-    Without this the knuckle is driven open-loop and fights whatever it
-    touches. With it, the knuckle's angle comes from the mechanism, which is
-    where it comes from on the real gripper.
-    """
-    anchors = _gripper_pin_anchors(urdf)
-    made = []
-    for side, (on_knuckle, on_tip) in anchors.items():
-        k = stage.GetPrimAtPath(f"{prim_path}/robotiq_85_{side}_inner_knuckle_link")
-        f = stage.GetPrimAtPath(f"{prim_path}/robotiq_85_{side}_finger_tip_link")
-        if not (k.IsValid() and f.IsValid()):
-            print(f"[sim] cannot pin {side} linkage: link prim missing")
-            continue
-        path = f"{prim_path}/joints/{side}_linkage_pin"
-        j = UsdPhysics.RevoluteJoint.Define(stage, path)
-        j.CreateBody0Rel().SetTargets([k.GetPath()])
-        j.CreateBody1Rel().SetTargets([f.GetPath()])
-        j.CreateLocalPos0Attr().Set(Gf.Vec3f(*on_knuckle.tolist()))
-        j.CreateLocalPos1Attr().Set(Gf.Vec3f(*on_tip.tolist()))
-        # Planar mechanism: the pin turns about the same axis the other
-        # gripper joints do. Leaving the limits off keeps it a free hinge.
-        j.CreateAxisAttr().Set(GRIPPER_PIN_AXIS)
-        j.CreateExcludeFromArticulationAttr().Set(True)
-        made.append(side)
-    if made:
-        one = anchors[made[0]]
-        print(f"[sim] 4-bar closed: pinned {', '.join(made)} inner knuckle "
-              f"to finger tip about {GRIPPER_PIN_AXIS}, "
-              f"anchor {np.round(one[0], 5).tolist()} / "
-              f"{np.round(one[1], 5).tolist()}")
-    return made
-
-
-def tune_arm_drives(stage, arm):
+def tune_arm_drives(stage, arm, drive_type=None):
     """Give the arm's position drives some damping. They ship with none.
 
     Isaac Sim 5.x ignores the importer's default_drive_strength and
@@ -251,11 +93,13 @@ def tune_arm_drives(stage, arm):
         if drive:
             drive.CreateStiffnessAttr().Set(k)
             drive.CreateDampingAttr().Set(d)
+            if drive_type:
+                drive.CreateTypeAttr().Set(drive_type)
             n += 1
     print(f"[sim] arm drives: {n} at stiffness {k:g}, damping {d:g}")
 
 
-def tune_gripper_drives(stage, prim_path, gripper):
+def tune_gripper_drives(stage, prim_path, gripper, drive_type=None):
     """Soften the gripper's drives, and release the ones the pin owns.
 
     Two separate things, both about the same 1e6 default: the followers must
@@ -273,6 +117,8 @@ def tune_gripper_drives(stage, prim_path, gripper):
         drive = UsdPhysics.DriveAPI.Get(prim, "angular")
         if not drive:
             continue
+        if drive_type:
+            drive.CreateTypeAttr().Set(drive_type)
         if follower and follower in name:
             drive.CreateStiffnessAttr().Set(0.0)
             drive.CreateDampingAttr().Set(0.0)
@@ -366,13 +212,9 @@ def build_stage(world, scene, robot_key, urdf):
         )
 
     spec = ROBOTS[robot_key]
-    linkage = spec["gripper"].get("linkage")
-    if linkage == "robotiq_2f85":
-        close_gripper_linkage(world.stage, prim_path, urdf)
-    elif linkage is not None:
-        raise ValueError(f"{robot_key}: unknown gripper linkage {linkage!r}")
-    tune_arm_drives(world.stage, spec["arm"])
-    tune_gripper_drives(world.stage, prim_path, spec["gripper"])
+    apply_linkage(world.stage, prim_path, spec["gripper"], urdf, robot_key)
+    tune_arm_drives(world.stage, spec["arm"], spec["drive_type"])
+    tune_gripper_drives(world.stage, prim_path, spec["gripper"], spec["drive_type"])
 
     # Payloads. Real rigid bodies, unlike everything above: they fall, they can
     # be squeezed, and they come away when the gripper closes. High friction on
@@ -380,9 +222,7 @@ def build_stage(world, scene, robot_key, urdf):
     # gripper hold rather than extrude what it is squeezing.
     payload = {}
     if scene.payload:
-        grip_mat = PhysicsMaterial(prim_path="/World/physics/grip",
-                                   static_friction=1.2, dynamic_friction=1.1,
-                                   restitution=0.0)
+        grip_mat = PhysicsMaterial(prim_path=GRIP_MATERIAL_PATH, **GRIP_MATERIAL)
         for name, dims, pose, colour, mass in scene.payload:
             cube = DynamicCuboid(
                 prim_path=f"/World/{name}",
@@ -396,39 +236,12 @@ def build_stage(world, scene, robot_key, urdf):
             payload[name] = cube
         # The pads get the same material. Which links carry them is the
         # gripper's business -- see rig.ROBOTS.
-        for link in spec["gripper"]["pad_links"]:
-            p = world.stage.GetPrimAtPath(f"{prim_path}/{link}/collisions")
-            if p.IsValid():
-                UsdShade.MaterialBindingAPI(p).Bind(
-                    UsdShade.Material(world.stage.GetPrimAtPath("/World/physics/grip")),
-                    UsdShade.Tokens.weakerThanDescendants, "physics")
+        bind_pad_material(world.stage, prim_path, spec["gripper"]["pad_links"])
 
     light = UsdLux.DistantLight.Define(world.stage, "/World/DistantLight")
     light.CreateIntensityAttr(2500)
     light.CreateAngleAttr(1.0)
     return prim_path, bodies, payload
-
-
-def draw_targets(targets):
-    """Mark each goal in the viewport without putting anything in the scene.
-
-    Points plus a small axis cross, so a goal reads as a location rather than a
-    stray dot. Redrawn from scratch each time, because the overlay accumulates.
-    """
-    draw = _debug_draw.acquire_debug_draw_interface()
-    draw.clear_points()
-    draw.clear_lines()
-    blue = (0.05, 0.43, 0.62, 1.0)
-    draw.draw_points([tuple(t[:3]) for t in targets], [blue] * len(targets),
-                      [14.0] * len(targets))
-    arm = 0.03
-    starts, ends = [], []
-    for t in targets:
-        x, y, z = t[:3]
-        for dx, dy, dz in ((arm, 0, 0), (0, arm, 0), (0, 0, arm)):
-            starts.append((x - dx, y - dy, z - dz))
-            ends.append((x + dx, y + dy, z + dz))
-    draw.draw_lines(starts, ends, [blue] * len(starts), [2.0] * len(starts))
 
 
 def attach_wrist_camera(world, prim_path, spec, urdf):
@@ -498,52 +311,6 @@ def attach_wrist_camera(world, prim_path, spec, urdf):
     return cam
 
 
-# Optical (+Z view, +X right, +Y down) -> ROS body (+X view, +Y left, +Z up),
-# as columns: body X = optical Z, body Y = -optical X, body Z = -optical Y.
-# R_body = R_optical @ this.
-OPTICAL_TO_ROS_BODY = np.array([
-    [0.0, -1.0, 0.0],
-    [0.0, 0.0, -1.0],
-    [1.0, 0.0, 0.0],
-])
-
-
-def _quat_to_matrix(q_wxyz):
-    """Rotation matrix whose COLUMNS are the frame's x, y, z axes in world."""
-    w, x, y, z = q_wxyz
-    return np.array([
-        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
-        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
-    ])
-
-
-def _matrix_to_quat(m):
-    """(w, x, y, z) from a rotation matrix, branching on the largest term.
-
-    The trace branch alone loses precision, and divides by zero outright, for
-    rotations near 180 degrees -- which is exactly what a straight-down camera
-    is, so the branches matter here rather than being defensive boilerplate.
-    """
-    t = m[0][0] + m[1][1] + m[2][2]
-    if t > 0:
-        sq = math.sqrt(t + 1.0) * 2
-        return np.array([0.25 * sq, (m[2][1] - m[1][2]) / sq,
-                         (m[0][2] - m[2][0]) / sq, (m[1][0] - m[0][1]) / sq])
-    i = int(np.argmax([m[0][0], m[1][1], m[2][2]]))
-    if i == 0:
-        sq = math.sqrt(1.0 + m[0][0] - m[1][1] - m[2][2]) * 2
-        return np.array([(m[2][1] - m[1][2]) / sq, 0.25 * sq,
-                         (m[0][1] + m[1][0]) / sq, (m[0][2] + m[2][0]) / sq])
-    if i == 1:
-        sq = math.sqrt(1.0 + m[1][1] - m[0][0] - m[2][2]) * 2
-        return np.array([(m[0][2] - m[2][0]) / sq, (m[0][1] + m[1][0]) / sq,
-                         0.25 * sq, (m[1][2] + m[2][1]) / sq])
-    sq = math.sqrt(1.0 + m[2][2] - m[0][0] - m[1][1]) * 2
-    return np.array([(m[1][0] - m[0][1]) / sq, (m[0][2] + m[2][0]) / sq,
-                     (m[1][2] + m[2][1]) / sq, 0.25 * sq])
-
-
 def attach_overhead_camera(world, spec):
     """Fixed camera on a gantry above the cell, looking straight down.
 
@@ -559,8 +326,8 @@ def attach_overhead_camera(world, spec):
     sensor rather than the other way round.
     """
     pose = spec["pose"]
-    r_opt = _quat_to_matrix(pose[3:])
-    q_body = _matrix_to_quat(r_opt @ OPTICAL_TO_ROS_BODY)
+    r_opt = quat_to_matrix(pose[3:])
+    q_body = matrix_to_quat(r_opt @ OPTICAL_TO_ROS_BODY)
 
     path = "/World/overhead_cam"
     cam = Camera(
@@ -609,56 +376,6 @@ def grab_depth(cam):
 
 
 # --- the interface ------------------------------------------------------------
-
-
-@dataclass
-class EnvCfg:
-    scene: str = scenes.DEFAULT
-    robot: str = DEFAULT_ROBOT
-    mapping: bool = True        # False: no cameras, the planner sees the static scene
-    overhead: bool = True       # the fixed camera, on top of the wrist one
-    map_every: int = 6          # fuse a frame every N sim steps while moving
-    depth_lag: int = 2          # sim steps the depth annotator trails the physics by
-    verbose: bool = True
-
-
-@dataclass
-class ResetOptions:
-    block_on: int = 0                       # which target the payload starts under
-    slab_pose: Optional[List[float]] = None  # [x, y, z] for the unmapped body; None = scene's
-    clear_map: bool = True                  # empty the server's map first
-    scan: bool = True                       # sweep scene.scan_poses to seed the map
-    settle_steps: int = 60
-
-
-@dataclass
-class MoveResult:
-    ok: bool
-    reason: Optional[str] = None     # why not, in the server's words
-    solve_ms: float = 0.0
-    waypoints: int = 0
-    clearance: Optional[str] = None  # closest approach to unmapped bodies, as reported
-    sim_steps: int = 0
-
-
-@dataclass
-class GripResult:
-    settled: bool                    # False: still creeping when the budget ran out
-    steps: int
-    target: float                    # commanded leader angle, rad
-    error: float                     # worst driven joint's distance from it
-    spread: Dict[str, float] = field(default_factory=dict)  # every joint, as fraction closed
-
-
-@dataclass
-class Observation:
-    q: np.ndarray                    # arm joints, in the planner's order
-    gripper: float                   # leader joint, rad (0 open)
-    tool_pose: np.ndarray            # tool frame [x, y, z, qw, qx, qy, qz], from the stage
-    objects: Dict[str, np.ndarray]   # payload poses, same layout -- ground truth
-    holding: bool
-    sim_time: float
-    depth: Optional[Dict[str, np.ndarray]] = None
 
 
 class SimEnv:
@@ -711,8 +428,9 @@ class SimEnv:
 
         px = PhysxSchema.PhysxArticulationAPI.Get(self.world.stage, prim_path)
         if px:
-            px.CreateSolverPositionIterationCountAttr(64)
-            px.CreateSolverVelocityIterationCountAttr(16)
+            pos_iters, vel_iters = self.spec["solver_iterations"]
+            px.CreateSolverPositionIterationCountAttr(pos_iters)
+            px.CreateSolverVelocityIterationCountAttr(vel_iters)
 
         probe = self.planner.plan(self.scene.home, self.scene.targets[0])
         curobo_names = probe["joint_names"]
@@ -927,10 +645,10 @@ class SimEnv:
         self.log("scanning the cell before planning...")
         fused = 0
         for pose in self.scene.scan_poses:
-            for step in range(70):
+            for step in range(SCAN_STEPS):
                 if not self.running:
                     break
-                blend = min(1.0, (step + 1) / 50.0)
+                blend = min(1.0, (step + 1) / float(SCAN_BLEND_STEPS))
                 cmd = [(1 - blend) * a + blend * b for a, b in zip(self.q_now(), pose)]
                 self.command_arm(cmd)
                 self._step()
@@ -965,7 +683,7 @@ class SimEnv:
                           clearance=res.get("clearance"),
                           sim_steps=self.steps - start)
 
-    def move_tool_z(self, dz, n_steps=70) -> MoveResult:
+    def move_tool_z(self, dz, n_steps=MOVE_Z_STEPS) -> MoveResult:
         """Move the tool dz straight up or down from the last goal, by IK.
 
         plan_pose is no use here: the block is in the map, and the planner will
@@ -1007,7 +725,8 @@ class SimEnv:
 
     def grip(self, close: bool) -> GripResult:
         """Stroke the gripper open or closed, then wait for it to stop."""
-        stroke = int(abs(self.grip_closed - self.grip_open) / self.grip_speed / SIM_DT) + 6
+        stroke = (int(abs(self.grip_closed - self.grip_open) / self.grip_speed / SIM_DT)
+                  + GRIP_EXTRA_STEPS)
         for i in range(stroke):
             f = (i + 1) / stroke if close else 1 - (i + 1) / stroke
             self.command_gripper(self.grip_open + (self.grip_closed - self.grip_open) * f)
@@ -1025,7 +744,8 @@ class SimEnv:
         return GripResult(settled=quiet, steps=waited, target=end, error=err,
                           spread=spread)
 
-    def _settle_gripper(self, target, max_steps=240, quiet_steps=12, tol=2.0e-4):
+    def _settle_gripper(self, target, max_steps=SETTLE_MAX_STEPS,
+                        quiet_steps=SETTLE_QUIET_STEPS, tol=SETTLE_TOL):
         """Step until the driven gripper joints stop moving.
 
         The stroke is commanded open-loop over a fixed number of steps, which
@@ -1071,16 +791,16 @@ class SimEnv:
         # USD matrices are row-vector: rows are the frame's axes in world.
         R = np.array([[r[j][i] for j in range(3)] for i in range(3)])
         t = m.ExtractTranslation()
-        tool = np.array([t[0], t[1], t[2], *_matrix_to_quat(R)], dtype=np.float32)
+        tool = np.array([t[0], t[1], t[2], *matrix_to_quat(R)], dtype=np.float32)
         objects = {}
         for name, cube in self.payload.items():
             p, q = cube.get_world_pose()
             objects[name] = np.array([*p, *q], dtype=np.float32)
         # Holding: the gripper was last closed, and something is between the
-        # fingers -- within 5 cm of the tool frame. A heuristic, not a contact
-        # query: good enough to tell "carrying it" from "closed on air".
+        # fingers -- see cell_api.HOLDING_RADIUS.
         holding = self._closed and any(
-            float(np.linalg.norm(o[:3] - tool[:3])) < 0.05 for o in objects.values())
+            float(np.linalg.norm(o[:3] - tool[:3])) < HOLDING_RADIUS
+            for o in objects.values())
         depth = None
         if images and self.cams:
             depth = {n: grab_depth(c) for n, c in self.cams.items()}

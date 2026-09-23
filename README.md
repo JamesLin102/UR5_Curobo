@@ -28,7 +28,9 @@ The block lands on its target pedestal to within 1–3 mm either way.
 
 The same cell is also a library (`SimEnv`: reset, move, grip, observe) and a
 gymnasium environment (`PickPlaceEnv`) for learning where to grip, with cuRobo
-doing every motion in between.
+doing every motion in between. It also runs on **Isaac Lab**, as a registered
+`DirectRLEnv` task, with the same planner and the same results — see
+[Isaac Lab backend](#isaac-lab-backend-experimental).
 
 ---
 
@@ -147,6 +149,25 @@ An oracle delivers in 2 steps; an episode takes about 2 s headless with mapping
 off and about 20 s with it on (each reset rescans). The planner server must be
 running, with `--no-mapping` to match `EnvCfg(mapping=False)`.
 
+## Isaac Lab backend (experimental)
+
+The cell rebuilt on Isaac Lab 2.3 (`scripts/lab/`), next to the Isaac Sim one
+and sharing its robot, scenes, planner server and demo loop. It registers
+`Isaac-PickPlace-Ur5Robotiq-v0` — one id per task per robot in `rig.ROBOTS` —
+so `gymnasium.make()`, Isaac Lab's `parse_env_cfg()` and its RL wrappers all
+take it. One environment today, built to become many.
+
+```bash
+python scripts/planner_server.py                      # as before
+python scripts/lab/isaaclab_client.py --device cpu    # the demo, on Isaac Lab
+python tools/check_pick_place_lab.py --device cpu --both-backends   # A/B, headless
+```
+
+It needs Isaac Lab installed from source into the same environment. Install
+steps, the A/B numbers, what differs between the backends and why, how to add
+robots, scenes and tasks, and the plan for many environments are in
+[docs/isaaclab.md](docs/isaaclab.md).
+
 ## Layout
 
 ```
@@ -154,8 +175,13 @@ scripts/
   planner_server.py     cuRobo: planning + live mapping, on a local socket
   planner_client.py     its client; needs neither Isaac Sim nor cuRobo
   sim_env.py            Isaac Sim side as a library: SimEnv
-  isaacsim_client.py    the demo loop
+  isaacsim_client.py    the demo
   pick_place_env.py     PickPlaceEnv (gymnasium)
+  lab/                  the Isaac Lab backend: robots, scene, cell, gym tasks
+  cell_api.py           what every backend offers: config, results, primitives
+  pick_place_task.py    the task itself: legs, rewards, observations
+  demo_loop.py          the demo loop, for either backend
+  sim_usd.py, urdf_frames.py   USD and URDF helpers both backends use
   rig.py                robots (arm + gripper settings), timing, port, cuRobo pin
   scenes/               base.py = the scene contract, pick_place.py = the scene
 configs/                cuRobo robot config (generated)
@@ -164,7 +190,8 @@ tools/                  checks, a collision-sphere viewer, model builders
 ```
 
 A new scene is a copy of `scripts/scenes/pick_place.py`; a new robot is an
-entry in `rig.ROBOTS` plus its URDF and cuRobo config.
+entry in `rig.ROBOTS` plus its URDF and cuRobo config. Both backends pick either
+up without changes; docs/isaaclab.md lists the rest of the extension points.
 
 ## Limitations
 

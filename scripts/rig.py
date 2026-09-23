@@ -23,6 +23,8 @@ SIM_DT = 1.0 / 60.0
 #                       but the planner's copy is trimmed to this one -- any
 #                       frame left in tool_frames becomes a frame plan_pose
 #                       demands a target for.
+#   solver_iterations   PhysX (position, velocity) iterations for the articulation
+#   drive_type          how PhysX applies the drive gains: "acceleration" or "force"
 #   arm                 the planned joints and how the simulator drives them,
 #                       plus which links' spheres are for the cameras only
 #   gripper             the linkage, how it is driven, and the pad geometry
@@ -44,6 +46,18 @@ ROBOTS = {
         "urdf": "assets/robot/ur5_robotiq/ur5_robotiq.urdf",
         "assets": "assets/robot/ur5_robotiq",
         "tool_frame": "grasp_frame",
+        # PhysX solver iterations for the whole articulation, position /
+        # velocity, which the simulator sets on the articulation root.
+        "solver_iterations": (64, 16),
+        # How PhysX reads every drive gain below. "acceleration" scales them
+        # by the joint's effective inertia, "force" applies them as torque.
+        # Isaac Sim's URDF importer makes acceleration drives, and every gain
+        # here was measured on those. The same numbers as FORCE drives are a
+        # different robot: on the 2F-85's 14-40 g links they are orders of
+        # magnitude stiffer, overpower the 4-bar's pin, and one finger
+        # stalls at 0.1 rad while the other shoves the block 24 mm across
+        # (measured on the Isaac Lab side before this was a setting).
+        "drive_type": "acceleration",
         "arm": {
             "joints": ("shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
                        "wrist_1_joint", "wrist_2_joint", "wrist_3_joint"),

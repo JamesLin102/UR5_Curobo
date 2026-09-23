@@ -71,7 +71,8 @@ def run_mode(mapping):
             clearances += gap
             log(f"seed {seed} {leg}@{idx}: failed={inf.get('failed')} "
                 f"holding={inf['holding']} success={inf['success']} "
-                f"clearance={inf.get('clearance')}")
+                f"clearance={inf.get('clearance')} "
+                f"block_to_goal={inf['block_to_goal'] * 1000:.1f} mm")
             if "failed" in inf:
                 failures.append(f"seed {seed} {leg}: {inf['failed']}")
             if leg == "pick" and not inf["holding"]:
