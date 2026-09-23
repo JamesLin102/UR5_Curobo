@@ -1,4 +1,4 @@
-"""UR5e + 2F-85 + wrist D435i: cuRobo 0.8 planning against a live volumetric map.
+"""UR5 + 2F-85 + wrist D435i: pick and place, planned by cuRobo 0.8 against a live map.
 
 This process runs Isaac Sim ONLY. It must never import cuRobo: Isaac Sim 5.1
 requires Warp 1.8.2 and cuRobo 0.8 requires Warp >= 1.13, so they cannot live
@@ -7,8 +7,9 @@ over a local socket.
 
 The scene's `unmapped` bodies are never described to the planner. The arm can
 only discover them through the cameras, so avoiding them is proof the map is
-actually feeding the planner. Scenes live in scripts/scenes/; both processes
-must be started with the same --scene.
+actually feeding the planner. The scene shuttles its `payload` between its
+targets; scenes live in scripts/scenes/, and both processes must be started
+with the same --scene.
 
 Start planner_server.py first, then:
     python scripts/isaacsim_ur5e_demo.py --robot ur5_robotiq
@@ -39,16 +40,17 @@ _ap.add_argument("--no-mapping", action="store_true")
 _ap.add_argument("--no-overhead", action="store_true",
                  help="wrist camera only, for A/B against the fixed camera")
 _ap.add_argument("--map-every", type=int, default=6, help="fuse a frame every N sim steps")
-_ap.add_argument("--move-body", "--move-cube", dest="move_body",
-                 action="store_true",
-                 help="drive the unmapped body along its scene motion instead "
-                      "of leaving it parked")
 _ap.add_argument("--static", action="store_true",
                  help="hold the arm at HOME; no planning, just look")
 _ap.add_argument("--depth-lag", type=int, default=2,
                  help="sim steps the depth annotator trails the physics by")
 ARGS = _ap.parse_args()
 SCENE = scenes.load(ARGS.scene)
+# The only loop this client has is pick-and-place. Checked before Isaac Sim
+# starts, so a scene without anything to pick fails in a second, not a minute.
+if not SCENE.payload:
+    raise SystemExit(f"scene {ARGS.scene!r} has no payload; this client only "
+                     f"runs pick-and-place")
 
 from isaacsim import SimulationApp  # noqa: E402
 
@@ -460,8 +462,9 @@ def build_stage(world):
     # the first fix here, but guides are hidden in the viewport too -- which
     # left a correct map and nothing for a person to look at. An overlay is
     # drawn by a separate pass that render products do not sample, so it solves
-    # both halves: visible to you, invisible to the cameras. `baseline` still
-    # reporting "0 tall []" is what proves the second half.
+    # both halves: visible to you, invisible to the cameras. A map reporting
+    # "0 tall []" with nothing standing in the cell is what proves the second
+    # half.
     draw_targets(SCENE.targets)
 
     # The bodies the planner is never told about. VisualCuboids, not physics
@@ -725,31 +728,6 @@ def grab_depth(cam):
     return np.nan_to_num(depth, nan=0.0, posinf=0.0, neginf=0.0)
 
 
-def move_bodies(bodies, t_s):
-    """Slide the scene's unmapped body along y, inside the cameras' scan band.
-
-    The planner is never told about this. The only way the arm can know where
-    the body is, is the cameras -- so a change in the planned route when it
-    arrives is the whole proof.
-
-    Returns the body's current y, or None if the scene has no unmapped body.
-    """
-    if not bodies:
-        return None
-    name, prim = next(iter(bodies.items()))
-    home_pose = SCENE.body(name)[2]
-    sweep = SCENE.motions.get(name)
-    if not ARGS.move_body or not sweep:
-        return home_pose[1]             # parked: the A/B test wants it still
-    a, b = sweep["y_from"], sweep["y_to"]
-    phase = (t_s % sweep["period_s"]) / sweep["period_s"]
-    # triangle wave: out and back, with a pause at each end
-    u = min(1.0, max(0.0, abs(1.0 - 2.0 * phase) * 1.4 - 0.2))
-    y = a + (b - a) * u
-    prim.set_world_pose(position=np.array([sweep["x"], y, home_pose[2]]))
-    return y
-
-
 def main():
     print(f"[demo] robot: {ARGS.robot}  urdf: {os.path.basename(URDF)}")
     planner = Planner()
@@ -788,9 +766,11 @@ def main():
         raise RuntimeError(f"planner joints absent from the simulator: {missing}")
     arm_idx = [sim_names.index(j) for j in curobo_names]
 
-    GRIPPER_COUPLING = ROBOTS[ARGS.robot].get("gripper_joints") or {}
-    grip_name = next(iter(GRIPPER_COUPLING), None)
-    grip_idx = sim_names.index(grip_name) if grip_name in sim_names else None
+    GRIPPER_COUPLING = ROBOTS[ARGS.robot]["gripper_joints"]
+    grip_name = next(iter(GRIPPER_COUPLING))
+    if grip_name not in sim_names:
+        raise RuntimeError(f"gripper joint {grip_name} absent from the simulator")
+    grip_idx = sim_names.index(grip_name)
     # The whole linkage, driven explicitly. The URDF carries no <mimic> tags:
     # PhysX refuses to build the constraint ("needs a finite limit set to be
     # used by the mimic joint feature", although every one of them has
@@ -816,15 +796,12 @@ def main():
                              dtype=np.float32)
     grip_mult = np.array(list(coupling.values()), dtype=np.float32)
 
-    grip_open = ROBOTS[ARGS.robot].get("gripper_open", 0.0)
-    grip_closed = ROBOTS[ARGS.robot].get("gripper_closed", 0.0)
+    grip_open = ROBOTS[ARGS.robot]["gripper_open"]
+    grip_closed = ROBOTS[ARGS.robot]["gripper_closed"]
     print(f"[demo] joints: {len(sim_names)} in sim, {len(curobo_names)} planned")
-    if grip_idx is None:
-        print("[demo] no gripper joint to drive")
-    else:
-        print(f"[demo] gripper: {len(coupling)} load-bearing joints driven, "
-              f"{grip_open} open .. {grip_closed} closed; "
-              f"inner knuckles set by the pinned 4-bar")
+    print(f"[demo] gripper: {len(coupling)} load-bearing joints driven, "
+          f"{grip_open} open .. {grip_closed} closed; "
+          f"inner knuckles set by the pinned 4-bar")
 
     def command_arm(q_curobo):
         """Send one planner-ordered joint vector, touching nothing else."""
@@ -845,8 +822,6 @@ def main():
         one side. See HANDOVER section 6: a 4-bar needs a loop closure URDF
         cannot express, and six independent position drives is not it.
         """
-        if not len(grip_idx_all):
-            return
         robot.apply_action(ArticulationAction(
             joint_positions=(grip_mult * angle).astype(np.float32),
             joint_indices=grip_idx_all))
@@ -854,8 +829,7 @@ def main():
     full_home = np.array(robot.get_joint_positions(), dtype=np.float32)
     for k, i in enumerate(arm_idx):
         full_home[i] = SCENE.home[k]
-    if grip_idx is not None:
-        full_home[grip_idx] = grip_open
+    full_home[grip_idx] = grip_open
     robot.set_joint_positions(full_home)
     command_arm(SCENE.home)
     command_gripper(grip_open)
@@ -939,7 +913,7 @@ def main():
         print("[demo]  arm should route around it.")
     else:
         print("[demo]  Mapping is off, so nothing can find it: the arm will")
-        print("[demo]  drive straight through. This is the A/B baseline.")
+        print("[demo]  drive straight through. This is the A/B control.")
     print("[demo] -------------------------------------------------------------")
 
     if ARGS.static:
@@ -1003,8 +977,6 @@ def main():
 
         Returns (steps waited, whether it went quiet, worst joint error).
         """
-        if not len(grip_idx_all):
-            return 0, True, 0.0
         want = grip_mult * target
         prev = robot.get_joint_positions()[grip_idx_all]
         quiet = 0
@@ -1085,91 +1057,16 @@ def main():
                       f"[{pos[0]:+.3f} {pos[1]:+.3f} {pos[2]:+.3f}]")
         return True
 
-    target_idx, plan_no, steps = 0, 0, 0
-    if payload:
-        print(f"[demo] pick-and-place: {list(payload)} shuttling between "
-              f"{len(SCENE.targets)} pedestals, descend "
-              f"{SCENE.pick['descend_m']:.3f} m / lift {SCENE.pick['lift_m']:.3f} m "
-              f"by IK, the rest planned")
-        src, dst = 0, 1
-        while simulation_app.is_running():
-            plan_no += 1
-            if pick_place_cycle(plan_no, src, dst):
-                src, dst = dst, src      # next time, bring it back
-
-        simulation_app.close()
-        return
-
+    plan_no = 0
+    print(f"[demo] pick-and-place: {list(payload)} shuttling between "
+          f"{len(SCENE.targets)} pedestals, descend "
+          f"{SCENE.pick['descend_m']:.3f} m / lift {SCENE.pick['lift_m']:.3f} m "
+          f"by IK, the rest planned")
+    src, dst = 0, 1
     while simulation_app.is_running():
-        result = planner.plan(q_now(), SCENE.targets[target_idx])
         plan_no += 1
-        if not result.get("ok"):
-            # Keep the body moving while we retry. Without this the sim freezes
-            # the one thing that could clear the route, and a blocked plan stays
-            # blocked forever.
-            y = None
-            for _ in range(30):
-                if not simulation_app.is_running():
-                    break
-                steps += 1
-                y = move_bodies(bodies, steps * SIM_DT)
-                world.step(render=True)
-                if cams and steps % ARGS.map_every == 0:
-                    fuse()
-            where = f" | body y={y:+.2f}" if y is not None else ""
-            print(f"[demo] plan #{plan_no} blocked - waiting{where}")
-            continue
-
-        traj = result["traj"]
-        y = move_bodies(bodies, steps * SIM_DT)
-        where = f" | body y={y:+.2f}" if y is not None else ""
-        print(f"[demo] plan #{plan_no} -> target {target_idx}: "
-              f"solve {result['solve_ms']:.0f} ms, {len(traj)} waypoints{where}")
-
-        for wp_row in traj:
-            if not simulation_app.is_running():
-                break
-            command_arm(wp_row)
-            move_bodies(bodies, steps * SIM_DT)
-            world.step(render=True)
-            q_history.append(q_now())
-            steps += 1
-            if cams and steps % ARGS.map_every == 0:
-                fuse()
-
-        # Close on arrival and open again before leaving. The planner is not
-        # told about this: the config locks the gripper OPEN, which is its
-        # widest, so a route that cleared with it open stays clear while it
-        # closes. Closing mid-travel would not be safe on that argument.
-        # The gripper's URDF velocity limit is 2.0 rad/s, so a full 0.8 rad
-        # stroke needs 0.4 s -- 24 steps at 60 Hz. Ten-step ramps left it
-        # stranded at +0.334 rad when the next plan started. Budget the travel
-        # from the limit rather than guessing: close, hold, open, settle.
-        stroke_steps = int(abs(grip_closed - grip_open) / GRIPPER_RAD_PER_S / SIM_DT) + 4
-        hold_steps = 10
-        settle = 90 if grip_idx is not None else 45
-        for i in range(settle):
-            if not simulation_app.is_running():
-                break
-            steps += 1
-            if grip_idx is not None:
-                if i < stroke_steps:
-                    phase = i / stroke_steps
-                elif i < stroke_steps + hold_steps:
-                    phase = 1.0
-                else:
-                    phase = max(0.0, 1.0 - (i - stroke_steps - hold_steps) / stroke_steps)
-                command_gripper(grip_open + (grip_closed - grip_open) * phase)
-            move_bodies(bodies, steps * SIM_DT)
-            world.step(render=True)
-            if cams and i >= 15 and i % ARGS.map_every == 0:
-                fuse()
-
-        err = np.rad2deg(np.abs(np.asarray(q_now()) - traj[-1]))
-        grip = "" if grip_idx is None else \
-            f", gripper back to {robot.get_joint_positions()[grip_idx]:+.3f} rad"
-        print(f"[demo]   tracking error: max {err.max():.2f} deg{grip}")
-        target_idx = 1 - target_idx
+        if pick_place_cycle(plan_no, src, dst):
+            src, dst = dst, src      # next time, bring it back
 
     simulation_app.close()
 

@@ -1,4 +1,4 @@
-"""Scene registry: ``load("demo_cube")`` -> SceneSpec.
+"""Scene registry: ``load("pick_place")`` -> SceneSpec.
 
 Both processes resolve their scene through here, by the same name, so a
 mismatch between them is a wrong name rather than a silent geometry drift.
@@ -14,7 +14,7 @@ from .base import Body, SceneSpec, WatchBox
 # contract from `scenes` without reaching into `scenes.base`.
 __all__ = ["Body", "SceneSpec", "WatchBox", "DEFAULT", "available", "load"]
 
-DEFAULT = "demo_cube"
+DEFAULT = "pick_place"
 
 
 def available() -> List[str]:

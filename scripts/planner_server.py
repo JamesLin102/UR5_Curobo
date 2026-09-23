@@ -166,7 +166,8 @@ class Mapping:
         # 73 mm lower than the e-Series arm cuRobo's config was tuned on, so
         # the upper arm's own spheres are permanently inside the inflated
         # duplicate however high the goal is. Measured: the collision-aware IK
-        # refused BOTH goals of demo_cube and of baseline, on every attempt,
+        # refused BOTH goals of the (since removed) demo_cube and baseline
+        # scenes, on every attempt,
         # while the map correctly reported nothing inside the robot; the
         # closest link was upper_arm_link at 15 mm.
         #

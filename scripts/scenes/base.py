@@ -9,8 +9,8 @@ Deliberately free of cuRobo and Isaac Sim imports -- Isaac Sim 5.1 pins Warp
 1.8.2 and cuRobo 0.8 needs Warp >= 1.13, so anything both processes import has
 to stay neutral. Standard library only.
 
-To add a scene, copy scenes/demo_cube.py, edit it, and run both processes with
-``--scene <module name>``.
+To add a scene, copy scenes/pick_place.py, edit it, and run both processes
+with ``--scene <module name>``.
 """
 
 from dataclasses import dataclass, field
@@ -67,7 +67,7 @@ class SceneSpec:
                               the pose by forward kinematics.
                       "pose"  fixed in world, [x,y,z,qw,qx,qy,qz], OPTICAL
                               frame (+Z along the view, +X right, +Y down).
-        mapper      TSDF/ESDF settings; see demo_cube.py for what each one
+        mapper      TSDF/ESDF settings; see pick_place.py for what each one
                     does and what it costs to get wrong. Optional key
                     "floor_z": nothing at or below that height is fused, so a
                     surface the planner already knows exactly (the table) is
@@ -89,9 +89,6 @@ class SceneSpec:
                     open-loop, because a thing you intend to grasp is exactly
                     a thing the map calls an obstacle. Keep them short.
         watch       volumes to report voxel counts for (see WatchBox).
-        motions     name -> dict describing how an unmapped body moves. The
-                    client decides how to interpret its own entries; the server
-                    ignores this field entirely.
     """
 
     obstacles: List[Body]
@@ -104,7 +101,6 @@ class SceneSpec:
     payload: List[Payload] = field(default_factory=list)
     pick: dict = field(default_factory=dict)
     watch: List[WatchBox] = field(default_factory=list)
-    motions: Dict[str, dict] = field(default_factory=dict)
 
     def __post_init__(self):
         for name, cam in self.cameras.items():

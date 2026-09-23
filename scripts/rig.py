@@ -1,8 +1,8 @@
 """The parts of the setup that are not the scene: robots, timing, transport.
 
 Everything here is the same whatever scene is loaded. The scene itself lives in
-scripts/scenes/ -- see scenes/base.py for the contract and scenes/demo_cube.py
-for the shipped example.
+scripts/scenes/ -- see scenes/base.py for the contract and scenes/pick_place.py
+for the shipped scene.
 
 Deliberately free of cuRobo and Isaac Sim imports so BOTH processes can load
 it: Isaac Sim 5.1 pins Warp 1.8.2 while cuRobo 0.8 needs Warp >= 1.13, so

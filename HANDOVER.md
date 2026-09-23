@@ -12,6 +12,15 @@ conversion and everything it broke, §12 is putting the demo back on its feet
 afterwards, and those two are the place to start if something in an older
 section does not match what you see.
 
+**Only `pick_place` is left (2026-09-23).** The `demo_cube` and `baseline`
+scenes were removed, along with the client's plain two-target loop and
+`--move-body`; their shared settings (cameras, mapper, HOME, scan poses) now
+live in `scripts/scenes/pick_place.py`, unchanged. Everything below that
+measures `demo_cube` or `baseline` is kept as the record it is -- the
+reasoning behind the mapper settings, the camera and the slab came from those
+runs -- but those scenes can no longer be run from this tree; `git show
+0f13431:scripts/scenes/demo_cube.py` has them.
+
 ---
 
 ## 1. What this is
@@ -82,13 +91,12 @@ DISPLAY=:1 /home/eencku/anaconda3/envs/curobo_isaaclab/bin/python \
 Useful flags: `--scene NAME` (**both sides, must match**), `--no-mapping` (both
 sides, for A/B), `--no-overhead` (demo only: wrist camera alone, for A/B
 against the fixed one), `--static` (demo only: hold the arm at HOME and just
-look through the cameras), `--move-body` (demo only: drive the unmapped body
-along its scene motion), `--no-cuda-graph` (server).
+look through the cameras), `--no-cuda-graph` (server).
 
 The server names its cameras at startup, so a mismatch is visible immediately:
 
 ```
-[planner] warp 1.15.0  robot ur5_robotiq  scene demo_cube
+[planner] warp 1.15.0  robot ur5_robotiq  scene pick_place
 [planner] cameras: wrist (camera_link), overhead (fixed)
 ```
 
@@ -637,10 +645,9 @@ scripts/
   scenes/
     base.py                 SceneSpec + WatchBox: what a scene must and may
                             define. The contract both processes build from.
-    demo_cube.py            the shipped scene. Copy this to make your own.
-    baseline.py             demo_cube minus the body the cameras have to
-                            find. The control run: if this fails, the
-                            problem is not the obstacle.
+    pick_place.py           the scene, and the only one. Copy this to make
+                            your own. (demo_cube and baseline were removed
+                            on 2026-09-23.)
     __init__.py             load(name) -> SceneSpec, available()
   rig.py                    what is NOT the scene: robots, SIM_DT, host/port
   planner_server.py         cuRobo 0.8: planning + mapping service

@@ -1,9 +1,10 @@
-# UR5_curobo — camera-driven obstacle avoidance
+# UR5_curobo — pick and place past an obstacle only the cameras see
 
 A UR5 (CB3) carrying a Robotiq FT 300, a Robotiq Wrist Camera, a 2F-85 gripper
 and a RealSense D435i, planning with **cuRobo 0.8** inside **Isaac Sim 5.1**.
-Depth is fused into a live TSDF/ESDF and handed back to the motion planner
-every few frames.
+It shuttles a block between two pedestals, indefinitely. Depth from a wrist
+camera and a fixed overhead one is fused into a live TSDF/ESDF and handed back
+to the motion planner every few frames.
 
 The robot description is **vendored, not assembled here**: it is
 [eugene900805/mir_ur5_humble](https://github.com/eugene900805/mir_ur5_humble)
@@ -12,47 +13,28 @@ was built link by link from photographs and datasheets, and its geometry was
 wrong in ways nobody could see. See
 [assets/robot/ur5_robotiq/PROVENANCE.md](assets/robot/ur5_robotiq/PROVENANCE.md).
 
-The point of the demo is what the planner is *not* told. The obstacle between
-the two targets exists only in the simulator; the planner's world contains a
-table and nothing else. The arm routes around it anyway, because the cameras
-put it in the map.
+The point is what the planner is *not* told. There is a slab between the
+pedestals that exists only in the simulator; the planner's world is the table,
+the two pedestals and nothing else. The arm routes around the slab anyway,
+because the cameras put it in the map.
 
-**Measured as the closest the plan comes to that obstacle**, not as the
-trajectory's length. Length is a bad proxy and it misled this repo for a while:
-a detour can come back the same number of waypoints, and does. The planner
-server reports the real thing on every plan — reporting only, nothing there
-reaches the planner:
+**Measured as the closest the plan comes to that slab**, not as the
+trajectory's length — a detour can come back the same number of waypoints, and
+does. The planner server reports it on every plan (reporting only; nothing there
+reaches the planner). On the legs that cross the slab, about 200 s a run:
 
-| `demo_cube`, 120 s a row | closest approach to the obstacle |
-|---|---|
-| `--no-mapping` | 60 plans, **all −20 mm** — straight through it |
-| mapping on | 49 plans, 0 failures: one −20 (before the map exists), 35 between −2 and 0, 14 between +3 and +11 |
+| `pick_place` | plans | closest approach to the slab, crossing legs |
+|---|---|---|
+| `--no-mapping` | 45, 0 failures | **−20 to −26 mm** on all 24 — straight through it |
+| mapping on | 28, 0 failures | −26 on the first (before the map exists), then 13 between −4 and +5 |
 
-The first plan of a mapped run is always the unmapped one, because the map does
-not exist yet. That single number flipping from −20 to positive, and staying
-there, is the demonstration.
+The legs that do not cross it clear it by +59 and +112 mm either way. The block
+lands on [0.450, ±0.400] to within 3 mm in both runs.
 
-Honest about the margin: with the cameras on it goes from 20 mm *through* the
-slab to skimming its surface, not clearing it by a comfortable distance. The
-mapped top sits at z = 0.34 against the real 0.35 — voxel sampling — and the
-planner clears what it was shown.
-
-**The obstacle had to be moved for this arm**, and that is not a regression.
-It diverted the UR5e from x = 0.30 and did nothing at all to the UR5: the
-unmapped route cleared it by +46.9 mm and +65.5 mm, and every row of the A/B
-came out at 81 waypoints. The CB3 shoulder sits 73 mm lower than the e-Series
-one, so the same two targets are reached in a different posture. Counting the
-route's own collision spheres by x band says where it actually goes:
-
-```
-x 0.20..0.30:   500 spheres      x 0.42..0.48:  6116
-x 0.30..0.38:  1250              x 0.48..0.55:  4677
-x 0.38..0.42:  1939
-```
-
-The arm crosses between the targets around x = 0.45, not x = 0.30. Moved
-there, its ORIGINAL height penetrates the route by 20.2 mm. Making it taller
-where it stood was the obvious move and the wrong one — see HANDOVER §11.
+Honest about the margin: with the cameras on, the route goes from 20 mm
+*through* the slab to skimming its surface, not clearing it by a comfortable
+distance. The mapped surface is voxel-sampled, and the planner clears what it
+was shown.
 
 ---
 
@@ -85,16 +67,16 @@ the version matrix and what breaks.
 Two terminals. The server must be listening before the sim starts.
 
 ```bash
-python scripts/planner_server.py --robot ur5_robotiq --scene demo_cube
+python scripts/planner_server.py
 ```
 
 ```bash
-DISPLAY=:1 python scripts/isaacsim_ur5e_demo.py --robot ur5_robotiq --scene demo_cube
+DISPLAY=:1 python scripts/isaacsim_ur5e_demo.py
 ```
 
-Both sides need the **same `--scene`**. They never exchange geometry, so the
-client checks on connect and stops rather than planning against a different
-world.
+`pick_place` is the default and only scene. If you add another, both sides need
+the **same `--scene`**: they never exchange geometry, so the client checks on
+connect and stops rather than planning against a different world.
 
 Closing the Isaac Sim window does **not** stop the planner server. If a restart
 behaves strangely, check that first:
@@ -107,12 +89,11 @@ ss -ltnp | grep 5599
 
 | flag | side | what it does |
 |---|---|---|
-| `--scene NAME` | both | which scene to load; must match |
+| `--scene NAME` | both | which scene to load (default `pick_place`); must match |
 | `--robot NAME` | both | `ur5_robotiq`, the only robot (default) |
-| `--no-mapping` | both | plan against the static world only — the A/B baseline |
+| `--no-mapping` | both | plan against the static world only — the A/B control |
 | `--no-overhead` | demo | wrist camera alone, for A/B against the fixed one |
 | `--static` | demo | hold at HOME and just look through the cameras |
-| `--move-body` | demo | drive the unmapped body along its scene motion |
 | `--map-every N` | demo | fuse a frame every N sim steps (default 6) |
 | `--depth-lag N` | demo | pair depth with the pose N steps back (default 2) |
 | `--no-cuda-graph` | server | build the planner without CUDA graphs |
@@ -120,40 +101,36 @@ ss -ltnp | grep 5599
 
 ---
 
-## Scenes
+## The scene
 
-| scene | what it is | measured on the UR5 |
-|---|---|---|
-| `demo_cube` | the shipped demo — one slab the cameras have to discover | 36–49 plans, 0 failures, 51 ms a plan; −20 mm into the slab unmapped, −2..+11 mapped |
-| `pick_place` | a block shuttled between two pedestals, past that slab | 19 plans, 0 failures; grasp settles in 35–43 steps, block lands on [0.450, ±0.400] |
-| `baseline` | the same cell with nothing to discover — the control run | 33 plans, 0 failures, **0 voxels** |
+`scripts/scenes/pick_place.py` holds everything the two processes must agree
+on, and the measurements behind each number:
 
-The two slabs are the same size and in **different places**, and that is
-deliberate rather than an oversight waiting to be tidied away: `demo_cube`
-needs its obstacle on the route, `pick_place` needs its own not to sit on the
-grasps. Importing one into the other was tried and made every goal in
-`pick_place` unreachable. `pick_place` also had to move its pedestals out to
-±0.40 to leave anywhere for a slab to stand.
+* **obstacles** — the table and two pedestals at [0.45, ±0.40]. The planner is
+  told about these exactly.
+* **unmapped** — the 0.12 × 0.35 × 0.46 m slab at x = 0.46. The planner is
+  never told; the cameras have to find it. Its position and height were chosen
+  by sweeping both against the route and the room left around the grasps.
+* **payload** — the 45 mm block, a real rigid body.
+* **pick** — the planner routes to a pose 0.125 m *above* the block, which the
+  map agrees is free; the descent onto it and the lift off are IK plus
+  interpolation, because a thing you intend to grasp is exactly a thing the map
+  calls an obstacle.
 
-`baseline` answers one question: with nothing to discover, is the rig healthy?
-Run it when plans start failing and you need to know whether the obstacle is
-responsible. That comparison is what caught the target markers being fused into
-the map as obstacles sitting on the goals.
+The pedestals are at ±0.40 rather than the original ±0.25 because at ±0.25
+there was no slab position that both blocked the route and left the grasps
+alone.
 
-Its map is now **empty**, and that is expected rather than a symptom: the table
-is the only thing in that cell and `mapper["floor_z"]` keeps it out of the map.
-Which also means baseline no longer exercises perception at all — for that, run
-`demo_cube` and watch the voxel count.
+### Adding a scene
 
-### Adding one
-
-Copy `scripts/scenes/demo_cube.py`, edit it, start both processes with
-`--scene <your module>`. `scripts/scenes/base.py` is the contract:
+Copy `scripts/scenes/pick_place.py`, edit it, start both processes with
+`--scene <your module>`. `scripts/scenes/base.py` is the contract; the client
+only runs pick-and-place, so a scene needs a `payload`:
 
 ```python
 SCENE = SceneSpec(
     obstacles=[...],   # cuboids the planner IS told about (table, fixtures)
-    targets=[...],     # tool goals [x, y, z, qw, qx, qy, qz]
+    targets=[...],     # tool goals [x, y, z, qw, qx, qy, qz], above each pick
     home=[...],        # joint rest pose (rad)
     scan_poses=[...],  # swept once at startup to seed the map
     cameras={...},     # each needs "link" (FK) or "pose" (fixed in world)
@@ -163,14 +140,12 @@ SCENE = SceneSpec(
     payload=[...],     # rigid bodies to be PICKED UP, with a mass
     pick={...},        # {"descend_m", "lift_m"} for the last few centimetres
     watch=[...],       # volumes to report voxel counts for
-    motions={...},     # how an unmapped body moves
 )
 ```
 
 **`mapper["self_mask_margin"]` is 0.18, not 0.12.** 0.12 is enough while the
-arm shuttles along a fixed route and not enough once it starts detouring: the
-mask began missing, the arm mapped itself, and the demo went from 0 failures
-to 74.
+arm follows a fixed route and not enough once it starts detouring: the mask
+began missing, the arm mapped itself, and a run went from 0 failures to 74.
 
 **`mapper["floor_z"]`: do not map what the planner already knows exactly.**
 Depth below that height is dropped before fusion. The table is a cuboid in
@@ -179,9 +154,9 @@ cm ESDF voxels plus the planner's collision activation distance. On a UR5 (CB3)
 that copy is fatal: the shoulder sits at z = 89 mm, 73 mm lower than the
 e-Series arm cuRobo's config was tuned on, and the upper arm's own collision
 spheres end up permanently inside it. Measured before the fix: the
-collision-aware IK refused **both** goals of `demo_cube` and of `baseline`, on
-every attempt, while the map correctly reported nothing inside the robot. The
-real table is still in the static scene and still checked.
+collision-aware IK refused every goal, on every attempt, while the map
+correctly reported nothing inside the robot. The real table is still in the
+static scene and still checked.
 
 Camera poses are cuRobo **optical** frames (+Z along the view, +X right, +Y
 down). The demo derives the ROS body quaternion Isaac Sim wants and then checks
@@ -200,9 +175,8 @@ Target markers are drawn as a viewport overlay for exactly this reason.
 ```
 scripts/
   scenes/base.py            SceneSpec + WatchBox — the contract
-  scenes/demo_cube.py       the shipped scene
-  scenes/baseline.py        same cell, nothing to discover
-  scenes/pick_place.py      pick a block off one pedestal, place it on the other
+  scenes/pick_place.py      the scene: pick a block off one pedestal, place it
+                            on the other, past a slab only the cameras see
   rig.py                    what is NOT the scene: robots, dt, host/port
   planner_server.py         cuRobo 0.8: planning + mapping service
   isaacsim_ur5e_demo.py     Isaac Sim client. Must not import cuRobo.
