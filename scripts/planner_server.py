@@ -27,6 +27,7 @@ Run:
 import argparse
 import copy
 import os
+import select
 import socket
 import sys
 import time
@@ -690,115 +691,141 @@ def main():
             f"[planner]   fuser -k {PORT}/tcp        # stop it"
         ) from exc
     srv.listen(1)
-    print(f"[planner] listening on {HOST}:{PORT}", flush=True)
+    print(f"[planner] listening on {HOST}:{PORT}  (Ctrl-C to stop)", flush=True)
 
-    while True:
-        conn, _ = srv.accept()
-        print("[planner] client connected", flush=True)
-        try:
-            while True:
-                header, payload = recv_msg(conn)
-                op = header.get("op")
+    # Never block in a socket call for more than half a second. This process
+    # has ~60 threads, most of them CUDA's and torch's, and the kernel hands
+    # Ctrl-C's SIGINT to whichever one it picks. CPython only turns it into a
+    # KeyboardInterrupt when the MAIN thread next runs Python -- and a main
+    # thread parked in accept() or recv() never does, so Ctrl-C used to take
+    # effect only when the next client connected. Waiting in short select()s
+    # hands control back twice a second; once a message starts arriving, the
+    # rest of it follows at once, so the reads themselves can still block.
+    def wait_readable(sock):
+        while not select.select([sock], [], [], 0.5)[0]:
+            pass
 
-                if op == "scene":
-                    # Handshake. The two processes never exchange geometry, so
-                    # a scene disagreement would otherwise show up only as
-                    # inexplicably wrong plans.
-                    asked = header.get("scene")
-                    if asked != args.scene:
-                        print(f"[planner] client wants scene {asked!r}, this "
-                              f"server is running {args.scene!r} - it will stop",
-                              flush=True)
-                    send_msg(conn, {"ok": asked == args.scene, "scene": args.scene})
+    try:
+        while True:
+            wait_readable(srv)
+            conn, _ = srv.accept()
+            print("[planner] client connected", flush=True)
+            serve(conn, args, scene, planner, kin, tool_frame, approach_ik,
+                  mapping, wait_readable)
+    except KeyboardInterrupt:
+        print("\n[planner] stopped", flush=True)
+    finally:
+        srv.close()
 
-                elif op == "ik":
-                    out, blob = handle_ik(approach_ik, kin, tool_frame, header)
-                    if not out["ok"]:
-                        print(f"[planner] ik FAILED for {header.get('target')}",
-                              flush=True)
-                    send_msg(conn, out, blob)
 
-                elif op == "plan":
-                    out, blob = handle_plan(planner, kin, tool_frame, header, approach_ik)
-                    if out["ok"]:
-                        gap = out.get("clearance")
-                        print(f"[planner] plan ok: {out['solve_ms']:.0f} ms, "
-                              f"{out['n']} waypoints"
-                              + (f" | clears {gap}" if gap else ""), flush=True)
-                    else:
-                        diag = ""
-                        if mapping is not None:
-                            q = torch.tensor([header["q"]], device="cuda",
-                                             dtype=torch.float32)
-                            diag = " | start: " + mapping.self_hit_report(q)
-                            if "goal_q" in out:
-                                gq = torch.tensor([out["goal_q"]], device="cuda",
-                                                  dtype=torch.float32)
-                                diag += " | goal: " + mapping.self_hit_report(gq)
-                        print(f"[planner] plan FAILED: {out.get('goal', out['status'])}"
-                              f"{diag}", flush=True)
-                    send_msg(conn, out, blob)
+def serve(conn, args, scene, planner, kin, tool_frame, approach_ik, mapping,
+          wait_readable):
+    """Answer one client until it disconnects."""
+    try:
+        while True:
+            wait_readable(conn)
+            header, payload = recv_msg(conn)
+            op = header.get("op")
 
-                elif op == "reset_map":
-                    if mapping is not None:
-                        mapping.reset(planner)
-                        print("[planner] map reset: planner using static "
-                              "scene only", flush=True)
-                    send_msg(conn, {"ok": True})
+            if op == "scene":
+                # Handshake. The two processes never exchange geometry, so
+                # a scene disagreement would otherwise show up only as
+                # inexplicably wrong plans.
+                asked = header.get("scene")
+                if asked != args.scene:
+                    print(f"[planner] client wants scene {asked!r}, this "
+                          f"server is running {args.scene!r} - it will stop",
+                          flush=True)
+                send_msg(conn, {"ok": asked == args.scene, "scene": args.scene})
 
-                elif op == "stats":
-                    if mapping is None:
-                        send_msg(conn, {"ok": True, "mapping": False})
-                    else:
-                        send_msg(conn, {"ok": True, "mapping": True,
-                                        "frames": mapping.frames,
-                                        "voxels": mapping.occupied,
-                                        "on_robot": mapping.self_hits,
-                                        "watch": mapping.watch_counts})
+            elif op == "ik":
+                out, blob = handle_ik(approach_ik, kin, tool_frame, header)
+                if not out["ok"]:
+                    print(f"[planner] ik FAILED for {header.get('target')}",
+                          flush=True)
+                send_msg(conn, out, blob)
 
-                elif op == "map":
-                    if mapping is None:
-                        send_msg(conn, {"ok": False, "reason": "mapping disabled"})
-                        continue
-                    h, w = header["h"], header["w"]
-                    depth = torch.frombuffer(
-                        bytearray(payload), dtype=torch.float32
-                    ).reshape(h, w).cuda()
-                    K = torch.tensor(header["K"], device="cuda", dtype=torch.float32)
-                    q = torch.tensor([header["q"]], device="cuda", dtype=torch.float32)
-                    cam_name = header.get("cam")
-                    if cam_name not in mapping.rigs:
-                        # Refuse rather than guess. Silently defaulting to the
-                        # wrist camera would self-mask a fixed camera's frame
-                        # with the wrong pose and quietly poison the map.
-                        print(f"[planner] dropping frame from unknown camera "
-                              f"{cam_name!r}", flush=True)
-                        continue
-                    mapping.integrate(depth, K, q, cam_name)
-                    refreshed = (mapping.frames
-                                 % scene.mapper["esdf_every_n_frames"] == 0)
-                    if refreshed:
-                        mapping.refresh_esdf(planner)
-                        per_cam = " ".join(f"{n}:{r['frames']}"
-                                           for n, r in mapping.rigs.items())
-                        print(f"[planner] map: {mapping.frames} frames fused "
-                              f"({per_cam}), "
-                              f"ESDF {mapping.last_esdf_ms:.1f} ms, "
-                              f"{mapping.occupied} voxels, "
-                              f"{mapping.watch_report}"
-                              f"{mapping.floor_report}"
-                              f"{mapping.self_hits} on the robot"
-                              + ("" if mapping.occupied else " (map empty - "
-                                 "planner using static scene only)"), flush=True)
-                    # No reply: "map" is fire-and-forget. A 1.2 MB frame every
-                    # few sim steps with a synchronous round-trip each time
-                    # throttled the simulation to a crawl.
+            elif op == "plan":
+                out, blob = handle_plan(planner, kin, tool_frame, header, approach_ik)
+                if out["ok"]:
+                    gap = out.get("clearance")
+                    print(f"[planner] plan ok: {out['solve_ms']:.0f} ms, "
+                          f"{out['n']} waypoints"
+                          + (f" | clears {gap}" if gap else ""), flush=True)
                 else:
-                    send_msg(conn, {"ok": False, "reason": f"unknown op {op}"})
-        except (ConnectionError, OSError) as exc:
-            print(f"[planner] client gone ({exc})", flush=True)
-        finally:
-            conn.close()
+                    diag = ""
+                    if mapping is not None:
+                        q = torch.tensor([header["q"]], device="cuda",
+                                         dtype=torch.float32)
+                        diag = " | start: " + mapping.self_hit_report(q)
+                        if "goal_q" in out:
+                            gq = torch.tensor([out["goal_q"]], device="cuda",
+                                              dtype=torch.float32)
+                            diag += " | goal: " + mapping.self_hit_report(gq)
+                    print(f"[planner] plan FAILED: {out.get('goal', out['status'])}"
+                          f"{diag}", flush=True)
+                send_msg(conn, out, blob)
+
+            elif op == "reset_map":
+                if mapping is not None:
+                    mapping.reset(planner)
+                    print("[planner] map reset: planner using static "
+                          "scene only", flush=True)
+                send_msg(conn, {"ok": True})
+
+            elif op == "stats":
+                if mapping is None:
+                    send_msg(conn, {"ok": True, "mapping": False})
+                else:
+                    send_msg(conn, {"ok": True, "mapping": True,
+                                    "frames": mapping.frames,
+                                    "voxels": mapping.occupied,
+                                    "on_robot": mapping.self_hits,
+                                    "watch": mapping.watch_counts})
+
+            elif op == "map":
+                if mapping is None:
+                    send_msg(conn, {"ok": False, "reason": "mapping disabled"})
+                    continue
+                h, w = header["h"], header["w"]
+                depth = torch.frombuffer(
+                    bytearray(payload), dtype=torch.float32
+                ).reshape(h, w).cuda()
+                K = torch.tensor(header["K"], device="cuda", dtype=torch.float32)
+                q = torch.tensor([header["q"]], device="cuda", dtype=torch.float32)
+                cam_name = header.get("cam")
+                if cam_name not in mapping.rigs:
+                    # Refuse rather than guess. Silently defaulting to the
+                    # wrist camera would self-mask a fixed camera's frame
+                    # with the wrong pose and quietly poison the map.
+                    print(f"[planner] dropping frame from unknown camera "
+                          f"{cam_name!r}", flush=True)
+                    continue
+                mapping.integrate(depth, K, q, cam_name)
+                refreshed = (mapping.frames
+                             % scene.mapper["esdf_every_n_frames"] == 0)
+                if refreshed:
+                    mapping.refresh_esdf(planner)
+                    per_cam = " ".join(f"{n}:{r['frames']}"
+                                       for n, r in mapping.rigs.items())
+                    print(f"[planner] map: {mapping.frames} frames fused "
+                          f"({per_cam}), "
+                          f"ESDF {mapping.last_esdf_ms:.1f} ms, "
+                          f"{mapping.occupied} voxels, "
+                          f"{mapping.watch_report}"
+                          f"{mapping.floor_report}"
+                          f"{mapping.self_hits} on the robot"
+                          + ("" if mapping.occupied else " (map empty - "
+                             "planner using static scene only)"), flush=True)
+                # No reply: "map" is fire-and-forget. A 1.2 MB frame every
+                # few sim steps with a synchronous round-trip each time
+                # throttled the simulation to a crawl.
+            else:
+                send_msg(conn, {"ok": False, "reason": f"unknown op {op}"})
+    except (ConnectionError, OSError) as exc:
+        print(f"[planner] client gone ({exc})", flush=True)
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":
