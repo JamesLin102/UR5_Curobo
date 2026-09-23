@@ -3,15 +3,11 @@
 **Camera-guided pick and place for a UR5 in Isaac Sim, planned by cuRobo.**
 The planner is never told where the obstacle is — the cameras find it.
 
-<!--
-  Demo video / GIF goes here. Put the file in docs/media/ and replace the
-  placeholder paragraph below with, for example:
-
-  <p align="center">
-    <img src="docs/media/pick_place.gif" width="720" alt="pick_place demo">
-  </p>
--->
-<p align="center"><i>[ pick_place demo video — coming soon ]</i></p>
+<p align="center">
+  <img src="docs/media/pick_place.gif" width="720" alt="pick_place: two round trips past the slab">
+  <br>
+  <sub>Two round trips, 2× speed. <a href="docs/media/pick_place.mp4">Full quality, real time (MP4)</a></sub>
+</p>
 
 A UR5 (CB3) with a Robotiq FT 300, Wrist Camera, 2F-85 gripper and a RealSense
 D435i shuttles a block between two pedestals. Between them stands a slab that
