@@ -395,6 +395,11 @@ class Mapping:
             self.floor_report = "floor cut " + " ".join(
                 f"{c}:{n}/{t}" for c, (n, t) in self.floor_cut.items()) + ", "
 
+        # update_world() takes effect one refresh late in cuRobo 0.8: pushing
+        # a grid with a box and planning is unaffected, pushing one without
+        # it and planning makes the box appear. Measured, not the cause of
+        # anything here yet -- but a map change only reaches the planner on
+        # the refresh after the one that carried it.
         world = static_scene(self.scene)
         if self.occupied > 0:
             world.voxel = [self.voxel_grid]

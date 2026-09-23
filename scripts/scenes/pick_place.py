@@ -23,7 +23,7 @@ Measured: the gripper stalls at +0.506 rad against the 45 mm block (commanded
 +0.800) and the block tracks the tool to within 5 mm through a 0.126 m lift.
 
     python scripts/planner_server.py --robot ur5_robotiq --scene pick_place
-    DISPLAY=:1 python scripts/isaacsim_client.py --robot ur5_robotiq --scene pick_place
+    python scripts/isaacsim_client.py --robot ur5_robotiq --scene pick_place
 """
 
 from rig import DEFAULT_ROBOT, ROBOTS

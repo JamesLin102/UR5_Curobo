@@ -831,9 +831,9 @@ class SimEnv:
         leader's position still cannot get there -- its own contact is what
         stops it, not its command.
 
-        The linkage visibly separates while gripping, by up to 0.22 rad within
-        one side. See HANDOVER section 6: a 4-bar needs a loop closure URDF
-        cannot express, and six independent position drives is not it.
+        Driven alone the linkage separates while gripping, by up to 0.22 rad
+        within one side: a 4-bar needs a loop closure, which URDF cannot
+        express. close_gripper_linkage adds it back in USD.
         """
         self.robot.apply_action(ArticulationAction(
             joint_positions=(self.grip_mult * angle).astype(np.float32),

@@ -147,13 +147,14 @@ ROBOTS = {
 DEFAULT_ROBOT = "ur5_robotiq"
 
 # The planner service. Both processes must agree; a stale server holding this
-# port is the classic confusing failure (see HANDOVER section 3).
+# port is the classic confusing failure: the new server exits with "Address
+# already in use" while the client happily connects to the OLD one.
 HOST = "127.0.0.1"
 PORT = 5599
 
-# The cuRobo build every number in HANDOVER was measured on. cuRobo is an
+# The cuRobo build every number in this project was measured on. cuRobo is an
 # editable install of a checkout on main, 42 commits past v0.8.0, and the
-# workarounds in HANDOVER section 4 are for bugs in THAT commit -- a pull would
+# upstream bugs planner_server works around are bugs in THAT commit -- a pull would
 # change the planner underneath them without a word. The checkout sits on a
 # local branch `ur5-curobo-pin` with no upstream, so `git pull` refuses, and
 # planner_server refuses to start on anything else (--allow-curobo-drift).

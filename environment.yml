@@ -1,0 +1,24 @@
+# Everything but cuRobo, which is installed from a pinned source checkout
+# afterwards -- see "Install" in the README. Versions are the ones the README's
+# numbers were measured with.
+#
+#   conda env create -f environment.yml
+#   conda activate ur5_curobo
+name: ur5_curobo
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu128
+      - --extra-index-url https://pypi.nvidia.com
+      # torch before Isaac Sim, and a cu128 build: the RTX 50 series
+      # (Blackwell, sm_120) needs CUDA 12.8 or newer.
+      - torch==2.7.0+cu128
+      - torchvision==0.22.0+cu128
+      - isaacsim[all,extscache]==5.1.0.0
+      - numpy==1.26.0
+      - gymnasium==1.2.1
+      - trimesh==4.5.1
+      - pyyaml==6.0.2

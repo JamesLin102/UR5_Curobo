@@ -6,19 +6,20 @@
      instead of on the mobile base. Mounting transforms are copied verbatim
      from mir_description/urdf/include/mir_100_v1.urdf.xacro.
 
-     Kept as the record of how source/ur5_robotiq.raw.urdf was produced, not
-     as something to run: the include paths below point at a scratch checkout
-     of the upstream packages that no longer exists. To regenerate, clone
-     mir_ur5_humble's dependencies and point them there. -->
+     Kept as the record of how source/ur5_robotiq.raw.urdf was produced. The
+     includes resolve through ROS package paths, so it expands in a ROS 2
+     workspace that has mir_ur5_humble's packages built (mir_description,
+     ur_description, realsense2_description, robotiq_description):
+         xacro ur5_robotiq.urdf.xacro > ur5_robotiq.raw.urdf -->
 <robot xmlns:xacro="http://ros.org/wiki/xacro" name="ur5_robotiq">
 
-  <xacro:include filename="/tmp/claude-1000/-media-eencku-2TBDATA-yusian-ubuntu-UR5-curobo/7641c2f1-5308-4508-b802-402af3a1f5bb/scratchpad/mir_ur5/mir_robot/mir_description/urdf/include/common_properties.urdf.xacro"/>
-  <xacro:include filename="/tmp/claude-1000/-media-eencku-2TBDATA-yusian-ubuntu-UR5-curobo/7641c2f1-5308-4508-b802-402af3a1f5bb/scratchpad/mir_ur5/Universal_Robots_ROS2_Description/urdf/ur_macro.xacro"/>
-  <xacro:include filename="/tmp/claude-1000/-media-eencku-2TBDATA-yusian-ubuntu-UR5-curobo/7641c2f1-5308-4508-b802-402af3a1f5bb/scratchpad/mir_ur5/realsense2_description/urdf/_d435i.urdf.xacro"/>
-  <xacro:include filename="/tmp/claude-1000/-media-eencku-2TBDATA-yusian-ubuntu-UR5-curobo/7641c2f1-5308-4508-b802-402af3a1f5bb/scratchpad/mir_ur5/mir_robot/mir_description/urdf/include/robotiq_wrist_stack.xacro"/>
-  <xacro:include filename="/tmp/claude-1000/-media-eencku-2TBDATA-yusian-ubuntu-UR5-curobo/7641c2f1-5308-4508-b802-402af3a1f5bb/scratchpad/mir_ur5/mir_robot/mir_description/urdf/include/robotiq_gripper_macro.xacro"/>
+  <xacro:include filename="$(find mir_description)/urdf/include/common_properties.urdf.xacro"/>
+  <xacro:include filename="$(find ur_description)/urdf/ur_macro.xacro"/>
+  <xacro:include filename="$(find realsense2_description)/urdf/_d435i.urdf.xacro"/>
+  <xacro:include filename="$(find mir_description)/urdf/include/robotiq_wrist_stack.xacro"/>
+  <xacro:include filename="$(find mir_description)/urdf/include/robotiq_gripper_macro.xacro"/>
 
-  <xacro:property name="ur_cfg" value="/tmp/claude-1000/-media-eencku-2TBDATA-yusian-ubuntu-UR5-curobo/7641c2f1-5308-4508-b802-402af3a1f5bb/scratchpad/mir_ur5/Universal_Robots_ROS2_Description/config/ur5"/>
+  <xacro:property name="ur_cfg" value="$(find ur_description)/config/ur5"/>
 
   <!-- The arm stands on the floor; no chassis, no cabinet. -->
   <link name="world"/>

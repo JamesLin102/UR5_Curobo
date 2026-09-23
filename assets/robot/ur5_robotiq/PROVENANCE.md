@@ -61,6 +61,7 @@ Not kept: `2f_140/` (only the 2F-85 is used) and `ur_to_robotiq_adapter`
   the D435i bracket in `meshes/d435i/visual/bracket.stl`.
 * The Robotiq Wrist Camera mesh is tessellated from Robotiq's own CAD download
   and is NOT covered by the BSD notice; see `meshes/wrist_camera/NOTICE.md` for
-  its source and terms.
+  its source. The project owner has confirmed it may be redistributed with
+  this repository (2026-09-23).
 * `meshes/d435i/visual/d435.dae` -- Apache-2.0, Intel (`realsense2_description`).
   Upstream's licence file was not vendored with it.
