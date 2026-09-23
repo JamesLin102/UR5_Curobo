@@ -15,6 +15,11 @@ Two operations, framed by scripts/proto.py:
     {"op": "plan", "q": [6 floats], "target": [x,y,z,qw,qx,qy,qz]}
         -> plan against the static scene PLUS whatever the map has learned.
 
+Plus "scene" (the handshake), "ik" (one pose, for the last few centimetres of
+a grasp), "reset_map" (forget everything fused, for a new episode) and
+"stats" (frames, voxels, per watched volume). planner_client.Planner speaks
+all of them.
+
 Run:
     python scripts/planner_server.py --robot ur5_robotiq
 """
@@ -194,6 +199,7 @@ class Mapping:
             for w in scene.watch
         ]
         self.watch_report = ""
+        self.watch_counts = {}
         self.floor_report = ""
         self.last_q = None
 
@@ -330,6 +336,25 @@ class Mapping:
                         sorted(per_link.items(), key=lambda kv: -kv[1])[:5])
         return f"{len(centers)} voxels, {inside} inside the robot [{top}]"
 
+    def reset(self, planner):
+        """Forget everything fused so far; the planner gets the static scene.
+
+        For episodic use: a new episode must not plan around where things
+        were in the last one. Frame counters restart too, so the ESDF refresh
+        cadence and the map report both read as a fresh run.
+        """
+        self.mapper.reset()
+        self.voxel_grid = None
+        self.occupied = 0
+        self.self_hits = 0
+        self.watch_report = ""
+        self.watch_counts = {}
+        self.floor_report = ""
+        self.frames = 0
+        for rig in self.rigs.values():
+            rig["frames"] = 0
+        planner.update_world(static_scene(self.scene))
+
     def refresh_esdf(self, planner):
         """Recompute the distance field and hand it to the planner.
 
@@ -353,6 +378,7 @@ class Mapping:
         # of it" -- a wrist camera never sees above its own altitude, so its
         # counts stop around 0.36 m however tall the obstacle really is.
         parts = []
+        self.watch_counts = {}
         for name, lo_t, hi_t in self.watch:
             n, zs = 0, ""
             if voxels.centers is not None and len(voxels.centers):
@@ -362,6 +388,7 @@ class Mapping:
                 if n:
                     z = c[inside][:, 2]
                     zs = f" z{z.min():.2f}..{z.max():.2f}"
+            self.watch_counts[name] = n
             parts.append(f"{n} in {name}{zs}")
         self.watch_report = (", ".join(parts) + ", ") if parts else ""
 
@@ -707,6 +734,23 @@ def main():
                         print(f"[planner] plan FAILED: {out.get('goal', out['status'])}"
                               f"{diag}", flush=True)
                     send_msg(conn, out, blob)
+
+                elif op == "reset_map":
+                    if mapping is not None:
+                        mapping.reset(planner)
+                        print("[planner] map reset: planner using static "
+                              "scene only", flush=True)
+                    send_msg(conn, {"ok": True})
+
+                elif op == "stats":
+                    if mapping is None:
+                        send_msg(conn, {"ok": True, "mapping": False})
+                    else:
+                        send_msg(conn, {"ok": True, "mapping": True,
+                                        "frames": mapping.frames,
+                                        "voxels": mapping.occupied,
+                                        "on_robot": mapping.self_hits,
+                                        "watch": mapping.watch_counts})
 
                 elif op == "map":
                     if mapping is None:

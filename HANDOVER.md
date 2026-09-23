@@ -653,9 +653,14 @@ scripts/
     __init__.py             load(name) -> SceneSpec, available()
   rig.py                    what is NOT the scene: robots, SIM_DT, host/port
   planner_server.py         cuRobo 0.8: planning + mapping service
-  isaacsim_client.py        Isaac Sim client. Must not import cuRobo.
-                            Builds the cameras; derives the ROS body pose of
-                            each fixed one from its optical pose and checks it.
+  planner_client.py         socket client for planner_server; imports
+                            neither Isaac Sim nor cuRobo
+  sim_env.py                SimEnv: the Isaac Sim side as a library -- stage,
+                            cameras, gripper, reset/move_to/move_tool_z/grip/
+                            observe. Must not import cuRobo. Builds the
+                            cameras; derives the ROS body pose of each fixed
+                            one from its optical pose and checks it.
+  isaacsim_client.py        the pick-and-place demo loop on top of SimEnv.
   proto.py                  length-prefixed framing (depth frames are 1.2 MB)
 
 tools/  -- model generation (rerun only if the robot changes):

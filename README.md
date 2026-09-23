@@ -94,6 +94,7 @@ ss -ltnp | grep 5599
 | `--no-mapping` | both | plan against the static world only — the A/B control |
 | `--no-overhead` | demo | wrist camera alone, for A/B against the fixed one |
 | `--static` | demo | hold at HOME and just look through the cameras |
+| `--headless` | demo | no window; renders only when the cameras need it |
 | `--map-every N` | demo | fuse a frame every N sim steps (default 6) |
 | `--depth-lag N` | demo | pair depth with the pose N steps back (default 2) |
 | `--no-cuda-graph` | server | build the planner without CUDA graphs |
@@ -170,6 +171,35 @@ Target markers are drawn as a viewport overlay for exactly this reason.
 
 ---
 
+## Driving it from code
+
+`scripts/sim_env.py` is the Isaac Sim side as a library, for anything that
+wants to decide where the arm goes next — a learning loop, a different task —
+and leave the motion to cuRobo:
+
+```python
+import sim_env
+sim_env.launch(headless=True)              # before anything else from Isaac
+env = sim_env.SimEnv(sim_env.EnvCfg(mapping=False))
+obs = env.reset(sim_env.ResetOptions(block_on=0))
+r = env.move_to(target)                    # MoveResult: ok, reason, solve_ms, clearance
+env.move_tool_z(-0.125)                    # IK + interpolation, from the last goal
+g = env.grip(close=True)                   # GripResult: settled, steps, spread
+obs = env.observe()                        # q, gripper, tool_pose, objects, holding
+```
+
+`reset()` puts the arm at HOME, the block under a target, optionally moves the
+unmapped slab, and empties the server's map (`clear_map`) so an episode does not
+plan around the last one's leftovers. Rescanning is `scan=True`; without it the
+first plan of an episode is planned against the static scene alone.
+Object poses in `observe()` are the simulator's ground truth, not perceived.
+
+Headless with mapping off runs about 5× real time on the development machine
+(6 s of motion in 1.2 s); with the cameras on it is about real time, because
+every step has to render.
+
+---
+
 ## Layout
 
 ```
@@ -179,7 +209,10 @@ scripts/
                             on the other, past a slab only the cameras see
   rig.py                    what is NOT the scene: robots, dt, host/port
   planner_server.py         cuRobo 0.8: planning + mapping service
-  isaacsim_client.py        Isaac Sim client. Must not import cuRobo.
+  planner_client.py         socket client for it; no Isaac Sim, no cuRobo
+  sim_env.py                the Isaac Sim side as a library: SimEnv. Must not
+                            import cuRobo
+  isaacsim_client.py        the demo loop on top of SimEnv
   proto.py                  length-prefixed framing (depth frames are 1.2 MB)
 
 configs/                    cuRobo v2 robot configs
