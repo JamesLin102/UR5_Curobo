@@ -208,10 +208,9 @@ the build** if any link falls below its bar — one unguarded run had put a
 single 5 mm sphere on wrist_3, covering 0.4% of it.
 
 **Checks and harnesses**, rerun whenever you change something —
-`check_robot_cfg.py` (FK → planner build → plan_pose), `show_collision_spheres.py`
-(the robot and its spheres in a browser, seconds rather than minutes),
-`ab_solution_spread.py` (failure rate and joint wander, `--scene` aware),
-`bench_mapper.py` (integrate/ESDF timing).
+`check_robot_cfg.py` (FK → planner build → plan_pose) and
+`show_collision_spheres.py` (the robot and its spheres in a browser, seconds
+rather than minutes).
 
 ```bash
 python tools/check_robot_cfg.py
