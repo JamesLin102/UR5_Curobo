@@ -125,11 +125,15 @@ pose on the goal pedestal.
 | | Isaac Sim (`sim_env`) | Isaac Lab (`lab/`) |
 |---|---|---|
 | mapping off, slab clearance | −26, −20, −16, −20 mm | −26, −20, −16, −20 mm |
-| mapping on, slab clearance | +4, +10, +2, −3 mm | +5, +9, +2, +6 mm |
+| mapping on, slab clearance | +4, +10, +2, +2 mm | +5, +9, +2, +6 mm |
 | placement error | 1.9–2.0 mm | 2.2–2.7 mm |
 | plan failures | 0 | 0 |
 | one seed (pick + place), mapping off | 1.8–2.0 s | 0.8–1.4 s |
 | one seed, mapping on (reset rescans) | 17–23 s | 11–12 s |
+
+The Isaac Sim side's last mapped leg read −3 mm before both backends started
+applying the URDF's colours (`sim_usd.apply_urdf_colors`), +2 mm after; nothing
+else moved.
 
 On `--device cuda:0` the Isaac Lab side passes as well (mapping on: +5, −4, +2,
 +5 mm; placement 1.2–2.9 mm), but takes 13–33 s a seed: see the note on GPU
@@ -195,7 +199,7 @@ scripts/
   cell_api.py          the contract: EnvCfg, results, CellLike, ops, run_ops_blocking
   pick_place_task.py   the task, simulator-free: legs as ops, Scorer (rewards, obs)
   demo_loop.py         the demo loop, for any CellLike
-  sim_usd.py           USD fixes both backends make (4-bar pin, pads, frames, overlay)
+  sim_usd.py           USD fixes both backends make (4-bar pin, pads, URDF colours, frames, overlay)
   urdf_frames.py       frame arithmetic read off the URDF
   lab/
     robots.py          rig.ROBOTS[key] -> ArticulationCfg, any robot

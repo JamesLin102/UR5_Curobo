@@ -36,8 +36,8 @@ from cell_api import (GRIP_EXTRA_STEPS, HOLDING_RADIUS, MOVE_Z_STEPS,  # noqa: E
                       SETTLE_QUIET_STEPS, SETTLE_TOL, EnvCfg, GripResult,
                       MoveResult, Observation, ResetOptions)
 from sim_usd import (GRIP_MATERIAL, GRIP_MATERIAL_PATH,  # noqa: E402,F401
-                     GRIPPER_PIN_AXIS, LINKAGES, apply_linkage, bind_pad_material,
-                     close_gripper_linkage, draw_targets, frame_prim)
+                     GRIPPER_PIN_AXIS, LINKAGES, apply_linkage, apply_urdf_colors,
+                     bind_pad_material, close_gripper_linkage, draw_targets, frame_prim)
 from urdf_frames import (OPTICAL_TO_ROS_BODY, gripper_pin_anchors,  # noqa: E402,F401
                          matrix_to_quat, quat_to_matrix, urdf_tree)
 
@@ -212,6 +212,7 @@ def build_stage(world, scene, robot_key, urdf):
         )
 
     spec = ROBOTS[robot_key]
+    apply_urdf_colors(world.stage, prim_path, urdf)
     apply_linkage(world.stage, prim_path, spec["gripper"], urdf, robot_key)
     tune_arm_drives(world.stage, spec["arm"], spec["drive_type"])
     tune_gripper_drives(world.stage, prim_path, spec["gripper"], spec["drive_type"])

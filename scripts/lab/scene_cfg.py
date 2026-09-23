@@ -32,8 +32,8 @@ from isaaclab.assets import Articulation, RigidObject, RigidObjectCfg
 from isaaclab.sensors import Camera, CameraCfg, TiledCameraCfg
 
 from rig import ROBOTS
-from sim_usd import (GRIP_MATERIAL, GRIP_MATERIAL_PATH, apply_linkage, bind_pad_material,
-                     body_ancestor)
+from sim_usd import (GRIP_MATERIAL, GRIP_MATERIAL_PATH, apply_linkage, apply_urdf_colors,
+                     bind_pad_material, body_ancestor)
 from urdf_frames import split_transform
 
 from .robots import ROOT, make_robot_cfg
@@ -207,6 +207,7 @@ def spawn_cell(scene, spec, cell):
         scene.clone_environments(copy_from_source=False)
 
     for path in sim_utils.find_matching_prim_paths(f"{ENV_NS}/Robot"):
+        apply_urdf_colors(stage, path, urdf)
         handles.pins = apply_linkage(stage, path, robot_spec["gripper"], urdf, cell.robot)
         if payload:
             handles.pads = bind_pad_material(stage, path, robot_spec["gripper"]["pad_links"])

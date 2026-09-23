@@ -18,7 +18,7 @@ delivers it; mapped routes stay >= -10 mm from the slab and unmapped ones do
 not. Then, once, that Isaac Lab's rsl_rl wrapper accepts the environment.
 
 For comparison, what the Isaac Sim backend measured when this was written:
-    mapping off   -26 / -20 / -16 / -20 mm     mapping on   +4 / +10 / +2 / -3 mm
+    mapping off   -26 / -20 / -16 / -20 mm     mapping on   +4 / +10 / +2 / +2 mm
 
 Exit status 0 means every check passed. rig.PORT must be free.
 """
@@ -37,7 +37,7 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 import check_pick_place as base  # noqa: E402  (server plumbing, same bound)
 from rig import DEFAULT_ROBOT, HOST, PORT  # noqa: E402
 
-REFERENCE_MM = {False: [-26, -20, -16, -20], True: [4, 10, 2, -3]}
+REFERENCE_MM = {False: [-26, -20, -16, -20], True: [4, 10, 2, 2]}
 
 
 def log(msg):

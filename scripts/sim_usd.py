@@ -3,7 +3,8 @@
 sim_env.py (Isaac Sim) and lab/ (Isaac Lab) import the same URDF through two
 different front ends, and then have to fix the same things on the stage: close
 the gripper's loop, recover frames the importer merged away, put the pad
-material on. Those fixes live here, once.
+material on, give the meshes the colours the URDF says. Those fixes live here,
+once.
 
 pxr and the Isaac modules can only be imported once a Kit app is running, so
 every function imports what it needs itself. Importing this module needs
@@ -122,6 +123,94 @@ def bind_pad_material(stage, prim_path, pad_links, material_path=GRIP_MATERIAL_P
                 material, UsdShade.Tokens.weakerThanDescendants, "physics")
             bound.append(link)
     return bound
+
+
+def urdf_visual_colors(urdf):
+    """[(link, mesh file stem, material name, rgba)] for every coloured mesh visual.
+
+    A colour is either inline -- <material name="x"><color rgba=".."/></material>
+    inside the <visual> -- or a reference by name to a top-level <material>.
+    """
+    import os
+    import xml.etree.ElementTree as ET
+
+    root = ET.parse(urdf).getroot()
+    named = {}
+    for m in root.findall("material"):
+        c = m.find("color")
+        if c is not None:
+            named[m.get("name")] = [float(v) for v in c.get("rgba").split()]
+    out = []
+    for link in root.findall("link"):
+        for vis in link.findall("visual"):
+            mesh = vis.find("geometry/mesh")
+            mat = vis.find("material")
+            if mesh is None or mat is None:
+                continue
+            c = mat.find("color")
+            rgba = [float(v) for v in c.get("rgba").split()] if c is not None \
+                else named.get(mat.get("name"))
+            if rgba is None:
+                continue
+            stem = os.path.splitext(os.path.basename(mesh.get("filename")))[0]
+            out.append((link.get("name"), stem, mat.get("name") or stem, rgba))
+    return out
+
+
+def apply_urdf_colors(stage, prim_path, urdf):
+    """Give mesh visuals the colour their URDF says. Returns what was coloured.
+
+    Isaac Sim's URDF importer (2.4.30 and 2.4.31 alike) ignores a URDF
+    <material> on a mesh visual: every mesh keeps the material its mesh
+    converter made, and for an STL -- which carries none -- that is a white
+    DefaultMaterial. So the FT 300 and the Wrist Camera, black in the URDF and
+    on the real arm, came out white on both backends. A DAE brings its own
+    materials, and this URDF gives those visuals no colour, so they are left
+    alone.
+
+    The importer makes each body's `visuals` an instance, and nothing inside an
+    instance can be edited; a body that fixed-joint merging folded several
+    links into (the wrist camera and its bracket) needs a colour per mesh. So
+    only the `visuals` that need colouring stop being instances, and each mesh
+    gets a UsdPreviewSurface bound stronger than the converter's own binding.
+    Idempotent.
+    """
+    from pxr import Gf, Sdf, Tf, UsdShade
+
+    tree = urdf_tree(urdf)
+    looks = f"{prim_path}/Looks"
+    done, missing = [], []
+    for link, stem, name, rgba in urdf_visual_colors(urdf):
+        # The link, or whichever ancestor it was merged into, holds the mesh.
+        node, target = link, None
+        while node is not None:
+            vis = stage.GetPrimAtPath(f"{prim_path}/{node}/visuals")
+            if vis.IsValid() and stage.GetPrimAtPath(f"{vis.GetPath()}/{stem}").IsValid():
+                target = vis
+                break
+            node = tree[node][0] if node in tree else None
+        if target is None:
+            missing.append(f"{link}/{stem}")
+            continue
+        if target.IsInstanceable():
+            target.SetInstanceable(False)
+        mat_path = f"{looks}/urdf_{Tf.MakeValidIdentifier(name)}"
+        material = UsdShade.Material.Define(stage, mat_path)
+        shader = UsdShade.Shader.Define(stage, f"{mat_path}/shader")
+        shader.CreateIdAttr("UsdPreviewSurface")
+        shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(*rgba[:3]))
+        shader.CreateInput("opacity", Sdf.ValueTypeNames.Float).Set(float(rgba[3]))
+        shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.5)
+        material.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(), "surface")
+        mesh = stage.GetPrimAtPath(f"{target.GetPath()}/{stem}")
+        UsdShade.MaterialBindingAPI.Apply(mesh).Bind(
+            material, UsdShade.Tokens.strongerThanDescendants)
+        done.append(f"{node}/visuals/{stem}={name}")
+    if done:
+        print(f"[sim] URDF colours: {', '.join(done)}")
+    if missing:
+        print(f"[sim] URDF colours: no mesh prim for {', '.join(missing)}")
+    return done
 
 
 def frame_prim(stage, prim_path, link, urdf):
