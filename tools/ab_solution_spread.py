@@ -45,7 +45,8 @@ def main():
     content = ContentPath(
         robot_config_absolute_path=f"{ROOT}/{args.config}",
         robot_urdf_absolute_path=f"{ROOT}/{args.urdf}",
-        robot_asset_absolute_path=f"{ROOT}/assets/robot/ur_description",
+        # Mesh paths in the URDF are relative to the URDF itself.
+        robot_asset_absolute_path=os.path.dirname(f"{ROOT}/{args.urdf}"),
     )
     kin = Kinematics(KinematicsCfg.from_content_path(content))
     spec = scenes.load(args.scene)

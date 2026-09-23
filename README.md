@@ -108,7 +108,7 @@ ss -ltnp | grep 5599
 | flag | side | what it does |
 |---|---|---|
 | `--scene NAME` | both | which scene to load; must match |
-| `--robot NAME` | both | `ur5_robotiq` (default, has the cameras) or `ur5e` (bare arm) |
+| `--robot NAME` | both | `ur5_robotiq`, the only robot (default) |
 | `--no-mapping` | both | plan against the static world only — the A/B baseline |
 | `--no-overhead` | demo | wrist camera alone, for A/B against the fixed one |
 | `--static` | demo | hold at HOME and just look through the cameras |
@@ -117,9 +117,6 @@ ss -ltnp | grep 5599
 | `--depth-lag N` | demo | pair depth with the pose N steps back (default 2) |
 | `--no-cuda-graph` | server | build the planner without CUDA graphs |
 | `--allow-curobo-drift` | server | start on a cuRobo other than the pinned commit (warns) |
-
-The mapping scenes need `--robot ur5_robotiq`: `camera_link` is defined in that
-URDF, and the bare `ur5e` has no camera to map with.
 
 ---
 
@@ -213,7 +210,13 @@ scripts/
 
 configs/                    cuRobo v2 robot configs
 assets/robot/ur5_robotiq/   the vendored description — see its PROVENANCE.md
-assets/robot/ur_description/  ur5e.urdf and its meshes, for the bare arm
+  ur5_robotiq.urdf          the one URDF in use; mesh paths relative to it
+  source/                   raw xacro output + the xacro, for regenerating
+  meshes/ur5/               UR5 (CB3) links        visual/ + collision/
+  meshes/ft300/             Robotiq FT 300         visual/
+  meshes/wrist_camera/      Robotiq Wrist Camera   visual/
+  meshes/robotiq_2f85/      2F-85 gripper          visual/ + collision/
+  meshes/d435i/             D435i body + bracket   visual/ + collision/ (hull)
 tools/                      model generation, checks and harnesses
 ```
 
@@ -224,7 +227,8 @@ python tools/build_ur5_robotiq_urdf.py     # xacro output -> the project URDF
 python tools/build_ur5_robotiq_config.py   # collision spheres -> cuRobo yml
 ```
 
-Both do only mechanical, reviewable edits, and both print what they did. The
+The URDF builder also maps every upstream `package://` mesh to its folder
+under `meshes/`, and stops if one has no entry. Both do only mechanical, reviewable edits, and both print what they did. The
 config builder scores every link with cuRobo's own coverage metric and **fails
 the build** if any link falls below its bar — one unguarded run had put a
 single 5 mm sphere on wrist_3, covering 0.4% of it.
@@ -233,11 +237,10 @@ single 5 mm sphere on wrist_3, covering 0.4% of it.
 `check_robot_cfg.py` (FK → planner build → plan_pose), `show_collision_spheres.py`
 (the robot and its spheres in a browser, seconds rather than minutes),
 `ab_solution_spread.py` (failure rate and joint wander, `--scene` aware),
-`bench_mapper.py` (integrate/ESDF timing), `clip_joint_limits.py`,
-`convert_v1_robot_yaml.py`.
+`bench_mapper.py` (integrate/ESDF timing).
 
 ```bash
-python tools/check_robot_cfg.py ur5e
+python tools/check_robot_cfg.py
 python tools/show_collision_spheres.py ur5_robotiq
 ```
 
@@ -245,14 +248,17 @@ python tools/show_collision_spheres.py ur5_robotiq
 
 ## Robot configs
 
-cuRobo 0.8 ships **no UR5 or UR5e config** — only `ur10e`. `configs/ur5e.yml`
-was converted from the 0.7.7 original with `tools/convert_v1_robot_yaml.py`;
-`configs/ur5_robotiq.yml` is generated from the vendored URDF.
+cuRobo 0.8 ships **no UR5 or UR5e config** — only `ur10e`.
+`configs/ur5_robotiq.yml` is generated from the vendored URDF: the whole stack,
+`grasp_frame` + `camera_link`. Its cspace weights and limits are cuRobo 0.7.7's
+hand-tuned UR5e values, now written into the config builder (`TUNED_CSPACE`);
+the bare UR5e option and its `configs/ur5e.yml` were removed on 2026-09-23.
 
-| file | |
-|---|---|
-| `ur5_robotiq.yml` | the whole stack, `grasp_frame` + `camera_link`; what the demo uses |
-| `ur5e.yml` | bare UR5e, `tool0`. Kept as the no-gripper option and as the source of the cspace weights |
+**Rebuilding the config refits the collision spheres, and the fit is not
+deterministic.** A rerun on 2026-09-23 came out with different spheres and
+missed the builder's own bar on two links (`base_link_inertia` 0.8999,
+`robotiq_wrist_camera_link` 0.8982, bar 0.90). The checked-in yml is the
+measured one; only rebuild it when the robot changes, and re-measure after.
 
 Point cuRobo at them with `ContentPath(robot_config_absolute_path=...,
 robot_urdf_absolute_path=..., robot_asset_absolute_path=...)` — see

@@ -32,11 +32,22 @@ import xml.etree.ElementTree as ET  # noqa: E402
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSETS = f"{ROOT}/assets/robot/ur5_robotiq"
 URDF = f"{ASSETS}/ur5_robotiq.urdf"
-TUNED = f"{ROOT}/configs/ur5e.yml"   # for cspace weights only, not geometry
 OUT = f"{ROOT}/configs/ur5_robotiq.yml"
 
 ARM_JOINTS = ["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
               "wrist_1_joint", "wrist_2_joint", "wrist_3_joint"]
+
+# Weights and limits for how this project wants the arm to move. Copied from
+# cuRobo 0.7.7's hand-tuned ur5e.yml, which used to be read from
+# configs/ur5e.yml at build time; they are properties of the motion, not of
+# which UR it is, so they carry across. Its geometry deliberately does not.
+TUNED_CSPACE = {
+    "cspace_distance_weight": [1.0, 1.0, 1.0, 1.5, 1.5, 1.5],
+    "null_space_weight": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+    "max_jerk": 500.0,
+    "max_acceleration": 12.0,
+    "position_limit_clip": 0.1,
+}
 
 # Sphere budget for the arm, copied from cuRobo's own hand-tuned ur5e.yml.
 # Its spheres cannot be reused -- the CB3 link meshes are a different shape,
@@ -340,10 +351,6 @@ def main():
         ignore[link] = sorted(set(ignore.get(link, [])) | set(others))
     k["self_collision_ignore"] = ignore
 
-    # Weights and limits are properties of how this project wants the arm to
-    # move, not of which UR it is, so they carry across from the tuned config.
-    # Geometry deliberately does not.
-    tuned = yaml.safe_load(open(TUNED))["robot_cfg"]["kinematics"]["cspace"]
     cs = k["cspace"]
     if cs["joint_names"] != ARM_JOINTS:
         names = cs["joint_names"]
@@ -355,11 +362,14 @@ def main():
                 cs[key] = [val[i] for i in keep]
         cs["joint_names"] = [names[i] for i in keep]
     assert cs["joint_names"] == ARM_JOINTS, cs["joint_names"]
-    for key in ("cspace_distance_weight", "null_space_weight",
-                "max_jerk", "max_acceleration", "position_limit_clip"):
-        if key in tuned:
-            cs[key] = tuned[key]
+    cs.update(TUNED_CSPACE)
     k["format_version"] = 2.0
+    # RobotBuilder records the absolute paths it was given. Every caller hands
+    # cuRobo absolute paths through ContentPath, which overwrites these two on
+    # load, so they are informational -- and an absolute one would name this
+    # machine's mount point. Relative to the project root instead.
+    k["urdf_path"] = os.path.relpath(URDF, ROOT)
+    k["asset_root_path"] = os.path.relpath(ASSETS, ROOT)
 
     out = built if "robot_cfg" in built else {"robot_cfg": built}
     yaml.safe_dump(out, open(OUT, "w"), sort_keys=False, default_flow_style=None)

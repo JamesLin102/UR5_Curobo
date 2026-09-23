@@ -1,19 +1,22 @@
 """Smoke-test a converted robot config under cuRobo 0.8.x: FK -> planner build -> plan_pose."""
 import os, sys, time, torch
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, f"{ROOT}/scripts")
+from rig import DEFAULT_ROBOT, ROBOTS  # noqa: E402
+from planner_server import SEGMENTER_ONLY  # noqa: E402
 from curobo.types import ContentPath, JointState, Pose, GoalToolPose
 from curobo.kinematics import Kinematics, KinematicsCfg
 from curobo.scene import Scene, Cuboid
 from curobo.motion_planner import MotionPlanner, MotionPlannerCfg
 from curobo._src.robot.loader.util import load_robot_yaml
 
-name = sys.argv[1] if len(sys.argv) > 1 else "ur5e"
-urdf = sys.argv[2] if len(sys.argv) > 2 else f"{name}.urdf"
+name = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_ROBOT
+spec = ROBOTS[name]
 
 content = ContentPath(
-    robot_config_absolute_path=f"{ROOT}/configs/{name}.yml",
-    robot_urdf_absolute_path=f"{ROOT}/assets/robot/ur_description/{urdf}",
-    robot_asset_absolute_path=f"{ROOT}/assets/robot/ur_description",
+    robot_config_absolute_path=f"{ROOT}/{spec['config']}",
+    robot_urdf_absolute_path=f"{ROOT}/{spec['urdf']}",
+    robot_asset_absolute_path=f"{ROOT}/{spec['assets']}",
 )
 
 kin = Kinematics(KinematicsCfg.from_content_path(content))
@@ -34,6 +37,13 @@ scene = Scene(cuboid=[Cuboid(name="table", dims=[1.5, 1.5, 0.1], pose=[0, 0, -0.
 import copy
 planner_dict = copy.deepcopy(load_robot_yaml(content))
 planner_dict["robot_cfg"]["kinematics"]["tool_frames"] = [tool]
+# And drop the spheres that exist only for self-masking the depth image: the
+# base is bolted to the table, so a planner that checks them calls every
+# configuration a collision. planner_server.build() drops the same links.
+pk = planner_dict["robot_cfg"]["kinematics"]
+pk["collision_link_names"] = [n for n in pk["collision_link_names"] if n not in SEGMENTER_ONLY]
+for n in SEGMENTER_ONLY:
+    pk["collision_spheres"].pop(n, None)
 planner = MotionPlanner(MotionPlannerCfg.create(
     robot=planner_dict, scene_model=scene, use_cuda_graph=True))
 planner.warmup()

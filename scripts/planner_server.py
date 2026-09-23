@@ -117,9 +117,8 @@ class Mapping:
         # A camera that derives its pose by forward kinematics needs its frame
         # to actually be one. Without this the failure is a KeyError on
         # tool_poses[...] inside the first integrate, several seconds into a
-        # run, naming a dict rather than the problem. The common way to hit it
-        # is a mapping scene with --robot ur5e: camera_link only exists in the
-        # 2F-85 URDF.
+        # run, naming a dict rather than the problem -- a scene naming a link
+        # the URDF does not have, say.
         missing = {
             name: spec["link"] for name, spec in cameras.items()
             if "link" in spec and spec["link"] not in kin.tool_frames
@@ -416,7 +415,7 @@ def build(robot_key, scene, use_cuda_graph=True):
     content = ContentPath(
         robot_config_absolute_path=f"{ROOT}/{spec['config']}",
         robot_urdf_absolute_path=f"{ROOT}/{spec['urdf']}",
-        robot_asset_absolute_path=f"{ROOT}/{spec.get('assets', 'assets/robot/ur_description')}",
+        robot_asset_absolute_path=f"{ROOT}/{spec['assets']}",
     )
     robot_dict = load_robot_yaml(content)
 

@@ -8,7 +8,7 @@ auto-fitted spheres have drifted from its geometry.
 No Isaac Sim, so it costs seconds rather than minutes. Run one per port to
 compare two robots side by side in two tabs:
 
-    python tools/show_collision_spheres.py ur5e
+    python tools/show_collision_spheres.py ur5_robotiq
     python tools/show_collision_spheres.py ur5_robotiq --port 8081
 
 Ctrl-C to stop. The per-link breakdown is printed as well, because a radius
@@ -88,7 +88,7 @@ def main():
         content_path=ContentPath(
             robot_config_absolute_path=config_path,
             robot_urdf_absolute_path=f"{ROOT}/{spec['urdf']}",
-            robot_asset_absolute_path=f"{ROOT}/{spec.get('assets', 'assets/robot/ur_description')}",
+            robot_asset_absolute_path=f"{ROOT}/{spec['assets']}",
         ),
         add_robot_to_scene=True,
         visualize_robot_spheres=True,

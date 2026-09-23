@@ -11,8 +11,8 @@ anything both sides import has to stay neutral.
 
 SIM_DT = 1.0 / 60.0
 
-# Selectable robots. Both are 6-DOF: the 2F-85's fingers are locked out of the
-# cspace, so the gripper adds reach and bulk but no DOF.
+# Selectable robots. 6-DOF: the 2F-85's fingers are locked out of the cspace,
+# so the gripper adds reach and bulk but no DOF.
 #
 # tool_frame is the frame plan_pose is given a goal for. Every OTHER frame in
 # the config's tool_frames (camera_link, for instance) is still available for
@@ -20,7 +20,7 @@ SIM_DT = 1.0 / 60.0
 # frame left in tool_frames becomes a frame plan_pose demands a target for.
 #
 # gripper_joints maps each joint of the gripper linkage to its multiplier of
-# one commanded angle, or is absent. None of them are in the planner's cspace:
+# one commanded angle. None of them are in the planner's cspace:
 # the robot config locks them all, so cuRobo places the fingers (and their
 # collision spheres) but does not plan them. The simulator drives them on its
 # own channel.
@@ -30,6 +30,8 @@ ROBOTS = {
     # from eugene900805/mir_ur5_humble with the MiR chassis removed -- see
     # assets/robot/ur5_robotiq/PROVENANCE.md. It replaces a model that was
     # assembled here by hand from photographs, whose link positions were wrong.
+    # Mesh paths in the URDF are relative to the URDF itself, which is also
+    # the asset root cuRobo is given.
     "ur5_robotiq": {
         "config": "configs/ur5_robotiq.yml",
         "urdf": "assets/robot/ur5_robotiq/ur5_robotiq.urdf",
@@ -45,15 +47,6 @@ ROBOTS = {
         },
         "gripper_open": 0.0,
         "gripper_closed": 0.8,
-    },
-    # The bare arm, with cuRobo's own shipped config. Kept as the
-    # no-gripper option and as the reference its cspace weights come from --
-    # it is a UR5e, not the CB3 above, so its GEOMETRY is not transferable.
-    "ur5e": {
-        "config": "configs/ur5e.yml",
-        "urdf": "assets/robot/ur_description/ur5e.urdf",
-        "tool_frame": "tool0",
-        "gripper_joints": None,
     },
 }
 DEFAULT_ROBOT = "ur5_robotiq"

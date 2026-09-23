@@ -1,7 +1,7 @@
 """Turn the upstream UR5 + Robotiq + D435i description into this project's URDF.
 
-The input, `assets/robot/ur5_robotiq/ur5_robotiq.raw.urdf`, is xacro's own
-output for `ur5_robotiq.urdf.xacro` -- the mir_ur5_humble stack with the MiR
+The input, `assets/robot/ur5_robotiq/source/ur5_robotiq.raw.urdf`, is xacro's
+own output for `source/ur5_robotiq.urdf.xacro` -- the mir_ur5_humble stack with the MiR
 chassis left out. Regenerating it needs the upstream ROS packages on disk, so
 it is vendored; see assets/robot/ur5_robotiq/PROVENANCE.md.
 
@@ -22,7 +22,7 @@ import trimesh
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSETS = f"{ROOT}/assets/robot/ur5_robotiq"
-RAW = f"{ASSETS}/ur5_robotiq.raw.urdf"
+RAW = f"{ASSETS}/source/ur5_robotiq.raw.urdf"
 OUT = f"{ASSETS}/ur5_robotiq.urdf"
 
 # Upstream namespaces the arm with "ur_". Dropping it gives the joint names
@@ -86,8 +86,43 @@ FLIP_VISUAL = {"robotiq_ft300_mounting_plate": (0.013, "0 3.14159265 0")}
 # one is a lump bolted beside the gripper where a few extra millimetres of
 # clearance cost nothing. Visual geometry is untouched: the viewer still shows
 # the real bracket next to the spheres.
-HULL_COLLISION = ["camera_mount"]
-HULL_DIR = "hull"
+HULL_COLLISION = {"camera_mount": "meshes/d435i/collision/bracket_hull.stl"}
+
+# Upstream lays its meshes out by ROS package; this project lays them out by
+# the hardware they belong to, one folder per device. Every mesh reference in
+# the raw URDF is rewritten through this table to a path relative to the
+# output URDF, and anything the table does not cover stops the build rather
+# than leaving a package:// path the simulator cannot resolve.
+#
+# The bracket's collision mesh is the same file as its visual one (identical
+# md5), so both map to one copy -- and the collision side is replaced by the
+# hull above in any case.
+MESH_DIRS = {
+    "ur_description/meshes/ur5/visual/": "meshes/ur5/visual/",
+    "ur_description/meshes/ur5/collision/": "meshes/ur5/collision/",
+    "mir_description/meshes/robotiq_wrist/robotiq_ft300.stl":
+        "meshes/ft300/visual/ft300.stl",
+    "mir_description/meshes/robotiq_wrist/robotiq_ft300_mounting_plate.stl":
+        "meshes/ft300/visual/ft300_mounting_plate.stl",
+    "mir_description/meshes/robotiq_wrist/robotiq_wrist_camera.stl":
+        "meshes/wrist_camera/visual/wrist_camera.stl",
+    "mir_description/meshes/visual/D435i_mounted.STL": "meshes/d435i/visual/bracket.stl",
+    "mir_description/meshes/collision/D435i_mounted.STL": "meshes/d435i/visual/bracket.stl",
+    "realsense2_description/meshes/d435.dae": "meshes/d435i/visual/d435.dae",
+    "robotiq_description/meshes/visual/2f_85/": "meshes/robotiq_2f85/visual/",
+    "robotiq_description/meshes/collision/2f_85/": "meshes/robotiq_2f85/collision/",
+}
+
+
+def mesh_path(f: str) -> str:
+    """package://<pkg>/<path> -> the same file in this project's asset tree."""
+    if not f.startswith("package://"):
+        raise SystemExit(f"mesh is not a package:// path: {f}")
+    f = f[len("package://"):]
+    for src, dst in MESH_DIRS.items():
+        if f == src or (src.endswith("/") and f.startswith(src)):
+            return dst + f[len(src):]
+    raise SystemExit(f"no MESH_DIRS entry for {f}")
 
 # Five of the six UR joints ship with a +/-360 degree range. With 720 degrees
 # to play in the planner picks IK branches that wind a wrist right round:
@@ -96,8 +131,8 @@ HULL_DIR = "hull"
 # management anyway. The gripper joints are far inside this and untouched.
 #
 # This was a separate step in the old build (tools/clip_joint_limits.py, run
-# by hand between the two builders); folded in here so regenerating cannot
-# lose it.
+# by hand between the two builders, since removed); folded in here so
+# regenerating cannot lose it.
 JOINT_LIMIT_DEG = 180.0
 
 # Isaac Sim's URDF importer derives USD prim names from these and does not
@@ -129,15 +164,7 @@ def main():
         if el.tag in ("parent", "child") and el.get("link"):
             el.set("link", rename(el.get("link")))
         if el.tag == "mesh" and el.get("filename"):
-            f = el.get("filename")
-            # package://<pkg>/... maps to <pkg>/... because the asset tree is
-            # laid out by package name. The RealSense body comes through as a
-            # file:// URL instead, because its xacro was included by path.
-            if f.startswith("package://"):
-                f = f[len("package://"):]
-            elif "realsense2_description/" in f:
-                f = "realsense2_description/" + f.split("realsense2_description/")[-1]
-            el.set("filename", f)
+            el.set("filename", mesh_path(el.get("filename")))
 
     links = {l.get("name"): l for l in robot.findall("link")}
     for name, (dz, rpy) in FLIP_VISUAL.items():
@@ -153,7 +180,7 @@ def main():
             o.set("rpy", rpy)
         print(f"  turned {name} around; robot face now on the flange")
 
-    for name in HULL_COLLISION:
+    for name, rel in HULL_COLLISION.items():
         link = links[name]
         hull = None
         for col in link.findall("collision"):
@@ -168,8 +195,7 @@ def main():
             link.remove(col)
         if hull is None:
             raise SystemExit(f"{name} has no collision mesh to hull")
-        rel = f"{HULL_DIR}/{name}.stl"
-        os.makedirs(f"{ASSETS}/{HULL_DIR}", exist_ok=True)
+        os.makedirs(os.path.dirname(f"{ASSETS}/{rel}"), exist_ok=True)
         hull.export(f"{ASSETS}/{rel}")
         col = ET.SubElement(link, "collision")
         ET.SubElement(ET.SubElement(col, "geometry"), "mesh").set("filename", rel)
