@@ -62,3 +62,12 @@ DEFAULT_ROBOT = "ur5_robotiq"
 # port is the classic confusing failure (see HANDOVER section 3).
 HOST = "127.0.0.1"
 PORT = 5599
+
+# The cuRobo build every number in HANDOVER was measured on. cuRobo is an
+# editable install of a checkout on main, 42 commits past v0.8.0, and the
+# workarounds in HANDOVER section 4 are for bugs in THAT commit -- a pull would
+# change the planner underneath them without a word. The checkout sits on a
+# local branch `ur5-curobo-pin` with no upstream, so `git pull` refuses, and
+# planner_server refuses to start on anything else (--allow-curobo-drift).
+CUROBO_COMMIT = "8e734f3ced1df898990bcd92de40abce475907db"
+CUROBO_VERSION = "0.8.0.post1.dev42"

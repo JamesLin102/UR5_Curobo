@@ -618,9 +618,14 @@ In rough priority order:
    closure URDF cannot express).
 2. Re-check the detour-vs-block window once coverage is better — with a fixed
    camera the mapped obstacle should match reality more closely.
-3. Consider pinning the cuRobo checkout. `/home/eencku/curobo` is an **editable
-   install sitting on `main`, 42 commits past the v0.8.0 tag** — a `git pull`
-   silently changes behaviour. Current commit was `8e734f3`.
+3. ~~Consider pinning the cuRobo checkout.~~ Done 2026-09-23. `/home/eencku/curobo`
+   is an editable install on `main`, 42 commits past v0.8.0, and upstream has
+   already moved (`78fd485` by then). It now sits on a local branch
+   `ur5-curobo-pin` at `8e734f3` with no upstream, so `git pull` refuses, and
+   `planner_server` checks HEAD against `rig.CUROBO_COMMIT` on startup and
+   exits on a mismatch (`--allow-curobo-drift` to override). Do not tag the
+   pin: cuRobo takes its version from `git describe`, and a non-version tag
+   there makes `import curobo` raise.
 
 ---
 

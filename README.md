@@ -65,6 +65,13 @@ conda activate curobo_isaaclab
 nvidia-curobo 0.8.0.post1.dev42 · torch 2.7.0+cu128 · Isaac Sim 5.1.0.0 · a
 CUDA GPU (developed on an RTX 5080).
 
+**cuRobo is pinned to commit `8e734f3`** (`rig.CUROBO_COMMIT`). It is an
+editable checkout of `main`, not a release, so the checkout sits on a local
+branch `ur5-curobo-pin` with no upstream — `git pull` refuses — and
+`planner_server` will not start on any other commit, or with local edits to
+cuRobo's tracked files. Moving the pin means re-measuring HANDOVER §10 and
+re-checking the workarounds in §4 first.
+
 **It runs as two processes, and it has to.** Isaac Sim 5.1 pins Warp 1.8.2;
 cuRobo 0.8 needs Warp >= 1.13; no version satisfies both. So cuRobo lives in
 one process and Isaac Sim in another, talking over a local socket.
@@ -109,6 +116,7 @@ ss -ltnp | grep 5599
 | `--map-every N` | demo | fuse a frame every N sim steps (default 6) |
 | `--depth-lag N` | demo | pair depth with the pose N steps back (default 2) |
 | `--no-cuda-graph` | server | build the planner without CUDA graphs |
+| `--allow-curobo-drift` | server | start on a cuRobo other than the pinned commit (warns) |
 
 The mapping scenes need `--robot ur5_robotiq`: `camera_link` is defined in that
 URDF, and the bare `ur5e` has no camera to map with.

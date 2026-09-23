@@ -32,7 +32,8 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import scenes  # noqa: E402
 from proto import recv_msg, send_msg  # noqa: E402
-from rig import DEFAULT_ROBOT, HOST, PORT, ROBOTS, SIM_DT  # noqa: E402
+from rig import (  # noqa: E402
+    CUROBO_COMMIT, CUROBO_VERSION, DEFAULT_ROBOT, HOST, PORT, ROBOTS, SIM_DT)
 
 from curobo.types import CameraObservation, ContentPath, GoalToolPose, JointState, Pose  # noqa: E402
 from curobo.kinematics import Kinematics, KinematicsCfg  # noqa: E402
@@ -602,6 +603,43 @@ def handle_ik(approach_ik, kin, tool_frame, header):
             sol.contiguous().cpu().numpy().astype(np.float32).tobytes())
 
 
+def check_curobo_pin(allow_drift):
+    """Refuse to plan on a cuRobo other than the one rig.CUROBO_COMMIT names.
+
+    Compares the checkout's HEAD when cuRobo is a git checkout (the editable
+    install this was developed on), and its version string otherwise. Local
+    edits to tracked files count as drift too; untracked files do not.
+    """
+    import subprocess
+    import curobo
+
+    version = getattr(curobo, "__version__", "?")
+    root = os.path.dirname(os.path.dirname(os.path.abspath(curobo.__file__)))
+
+    def git(*cmd):
+        return subprocess.run(["git", "-C", root, *cmd], capture_output=True,
+                              text=True).stdout.strip()
+
+    head = git("rev-parse", "HEAD")
+    if head:
+        dirty = git("status", "--porcelain", "--untracked-files=no")
+        found = f"{head[:7]}{' + local edits' if dirty else ''} ({root})"
+        ok = head == CUROBO_COMMIT and not dirty
+    else:
+        found = f"version {version}, not a git checkout ({root})"
+        ok = version == CUROBO_VERSION
+    if ok:
+        print(f"[planner] curobo {version} @ {CUROBO_COMMIT[:7]} (pinned)", flush=True)
+        return
+    msg = (f"cuRobo is {found}, but everything here was measured on "
+           f"{CUROBO_COMMIT[:7]} ({CUROBO_VERSION}). See rig.CUROBO_COMMIT.")
+    if not allow_drift:
+        raise SystemExit(f"[planner] {msg}\n[planner] restore it with "
+                         f"`git -C {root} switch ur5-curobo-pin`, or pass "
+                         f"--allow-curobo-drift to run anyway.")
+    print(f"[planner] WARNING: {msg}", flush=True)
+
+
 def main():
     import warp as wp
 
@@ -612,7 +650,10 @@ def main():
     ap.add_argument("--no-mapping", action="store_true")
     ap.add_argument("--no-cuda-graph", action="store_true",
                     help="build the planner without CUDA graphs")
+    ap.add_argument("--allow-curobo-drift", action="store_true",
+                    help="run on a cuRobo other than rig.CUROBO_COMMIT")
     args = ap.parse_args()
+    check_curobo_pin(args.allow_curobo_drift)
 
     scene = scenes.load(args.scene)
     globals()['SCENE_FOR_REPORT'] = scene
