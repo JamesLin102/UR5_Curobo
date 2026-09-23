@@ -26,7 +26,7 @@ started here by scripts/planner_servers.py; with mapping off they may share
 fewer (--num-servers), since the planner's world is then the same for all.
 
 For comparison, what the Isaac Sim backend measured when this was written:
-    mapping off   -26 / -20 / -16 / -20 mm     mapping on   +4 / +10 / +2 / +2 mm
+    mapping off   -26 / -20 / -16 / -20 mm     mapping on   +4 / +10 / +2 / -3..+2 mm
 
 Exit status 0 means every check passed. The servers' ports (rig.PORT and up)
 must be free.

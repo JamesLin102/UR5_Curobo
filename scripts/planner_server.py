@@ -740,7 +740,15 @@ def serve(conn, args, scene, planner, kin, tool_frame, approach_ik, mapping,
                     print(f"[planner] client wants scene {asked!r}, this "
                           f"server is running {args.scene!r} - it will stop",
                           flush=True)
-                send_msg(conn, {"ok": asked == args.scene, "scene": args.scene})
+                # Mapping too: the client refuses a server that disagrees.
+                maps = mapping is not None
+                wants = header.get("mapping")
+                if wants is not None and wants != maps:
+                    print(f"[planner] client {'maps' if wants else 'does not map'}, "
+                          f"this server {'does' if maps else 'does not'} "
+                          f"- it will stop", flush=True)
+                send_msg(conn, {"ok": asked == args.scene and wants in (None, maps),
+                                "scene": args.scene, "mapping": maps})
 
             elif op == "ik":
                 out, blob = handle_ik(approach_ik, kin, tool_frame, header)
@@ -789,7 +797,15 @@ def serve(conn, args, scene, planner, kin, tool_frame, approach_ik, mapping,
 
             elif op == "map":
                 if mapping is None:
-                    send_msg(conn, {"ok": False, "reason": "mapping disabled"})
+                    # No reply, even to refuse: "map" is fire-and-forget, and
+                    # a reply the client never reads would be read instead as
+                    # the answer to its NEXT request. The handshake stops a
+                    # client that maps from getting here; this is for one
+                    # that did not say.
+                    if not getattr(serve, "_warned", False):
+                        print("[planner] dropping depth frames: this server "
+                              "runs --no-mapping", flush=True)
+                        serve._warned = True
                     continue
                 h, w = header["h"], header["w"]
                 depth = torch.frombuffer(

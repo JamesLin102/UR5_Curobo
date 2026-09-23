@@ -18,10 +18,17 @@ class SceneMismatch(RuntimeError):
     """The server loaded a different scene from the one this side asked for."""
 
 
+class MappingMismatch(RuntimeError):
+    """One side maps and the other does not."""
+
+
 class Planner:
     """Framed socket client for planner_server.py."""
 
-    def __init__(self, scene, host=HOST, port=PORT, timeout_s=600, log=print):
+    def __init__(self, scene, host=HOST, port=PORT, timeout_s=600, log=print,
+                 mapping=None):
+        """`mapping`: whether this side will send depth frames. When given,
+        the handshake refuses a server that disagrees; None skips the check."""
         self.log = log
         deadline = time.time() + timeout_s
         while True:
@@ -36,17 +43,25 @@ class Planner:
                     )
                 time.sleep(2.0)
         self.log(f"connected to planner on {host}:{port}")
-        self._check_scene(scene)
+        self._check_scene(scene, mapping)
 
-    def _check_scene(self, scene):
-        """Refuse to run against a planner that loaded a different scene.
+    def _check_scene(self, scene, mapping=None):
+        """Refuse to run against a planner that loaded a different scene, or
+        that disagrees about mapping.
 
-        The two processes never exchange geometry, so a mismatch would show up
-        only as inexplicably wrong plans. Checked on connect rather than on the
-        first plan: this is before the stage is built, so the failure is
-        immediate and costs nothing.
+        The two processes never exchange geometry, so a scene mismatch would
+        show up only as inexplicably wrong plans. A mapping mismatch is worse:
+        a sim that maps against a server started with --no-mapping sends
+        frames nobody fuses, so the arm drives through what its cameras see;
+        a server that maps against a sim that does not keeps planning around
+        a map that never updates. Checked on connect rather than on the first
+        plan: this is before the stage is built, so the failure is immediate
+        and costs nothing.
         """
-        send_msg(self.sock, {"op": "scene", "scene": scene})
+        msg = {"op": "scene", "scene": scene}
+        if mapping is not None:
+            msg["mapping"] = bool(mapping)
+        send_msg(self.sock, msg)
         header, _ = recv_msg(self.sock)
         theirs = header.get("scene")
         if theirs != scene:
@@ -54,6 +69,12 @@ class Planner:
                 f"SCENE MISMATCH: the planner is running {theirs!r}, this "
                 f"process has {scene!r}. Both sides build their world from the "
                 f"scene, so they must match. Restart one of them.")
+        # An older server does not say; then there is nothing to compare.
+        if mapping is not None and "mapping" in header and header["mapping"] != bool(mapping):
+            on, off = ("this process", "the planner") if mapping else ("the planner", "this process")
+            raise MappingMismatch(
+                f"MAPPING MISMATCH: {on} maps and {off} does not. Start both "
+                f"with --no-mapping, or neither.")
 
     def plan(self, q, target):
         """Header dict; with "traj" (n x dof float32) added when "ok"."""

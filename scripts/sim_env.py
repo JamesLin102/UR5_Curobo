@@ -396,7 +396,7 @@ class SimEnv:
         self.urdf = f"{ROOT}/{self.spec['urdf']}"
         self.log(f"robot: {cfg.robot}  urdf: {os.path.basename(self.urdf)}")
         try:
-            self.planner = Planner(cfg.scene, log=self.log)
+            self.planner = Planner(cfg.scene, log=self.log, mapping=cfg.mapping)
         except Exception:
             _APP.close()
             raise

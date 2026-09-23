@@ -75,7 +75,7 @@ class ServerPool(PlannerPool):
         if k > num_envs:
             raise ValueError(f"num_servers {k} is more than num_envs {num_envs}")
         self.clients = [Planner(cell.scene, host=cell.host, port=cell.port + i,
-                                log=log) for i in range(k)]
+                                log=log, mapping=cell.mapping) for i in range(k)]
         self._threads = ThreadPoolExecutor(max_workers=k) if k > 1 else None
 
     def _client(self, env):
