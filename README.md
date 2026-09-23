@@ -155,7 +155,8 @@ The cell rebuilt on Isaac Lab 2.3 (`scripts/lab/`), next to the Isaac Sim one
 and sharing its robot, scenes, planner server and demo loop. It registers
 `Isaac-PickPlace-Ur5Robotiq-v0` — one id per task per robot in `rig.ROBOTS` —
 so `gymnasium.make()`, Isaac Lab's `parse_env_cfg()` and its RL wrappers all
-take it. One environment today, built to become many.
+take it. It runs one cell or many side by side, each with its own cameras, map
+and planner server.
 
 ```bash
 python scripts/planner_server.py                      # as before
@@ -163,9 +164,16 @@ python scripts/lab/isaaclab_client.py --device cpu    # the demo, on Isaac Lab
 python tools/check_pick_place_lab.py --device cpu --both-backends   # A/B, headless
 ```
 
+Four cells at once (one planner server each):
+
+```bash
+python scripts/planner_servers.py --num 4
+python scripts/lab/isaaclab_client.py --device cpu --num_envs 4 --camera-class tiled
+```
+
 It needs Isaac Lab installed from source into the same environment. Install
 steps, the A/B numbers, what differs between the backends and why, how to add
-robots, scenes and tasks, and the plan for many environments are in
+robots, scenes and tasks, and how far it scales are in
 [docs/isaaclab.md](docs/isaaclab.md).
 
 ## Layout
@@ -173,6 +181,7 @@ robots, scenes and tasks, and the plan for many environments are in
 ```
 scripts/
   planner_server.py     cuRobo: planning + live mapping, on a local socket
+  planner_servers.py    N of them on consecutive ports, one per Isaac Lab cell
   planner_client.py     its client; needs neither Isaac Sim nor cuRobo
   sim_env.py            Isaac Sim side as a library: SimEnv
   isaacsim_client.py    the demo

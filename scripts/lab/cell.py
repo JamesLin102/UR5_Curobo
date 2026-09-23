@@ -317,7 +317,7 @@ class LabCell:
             # Once more after the first reset: a camera that renders right at
             # start-up and wrong after a reset is how the Fabric pose copy
             # described in scene_cfg.spawn_cell showed itself.
-            self.check_cameras(env_ids[0])
+            self.check_cameras(env_ids)
             self._cameras_checked_after_reset = True
         return self.observe(env_ids)
 
@@ -406,26 +406,30 @@ class LabCell:
         dist = self._scene_distance((rays * z[:, None]) @ W[:3, :3].T + W[:3, 3], env)
         return float(np.median(dist)), float((dist < 0.01).mean()), len(dist)
 
-    def check_cameras(self, env=0):
+    def check_cameras(self, env_ids=None):
         """Verify, don't assume: does each depth image line up with the scene?
 
         Right, the median distance from the scene's surfaces is a few mm (the
         arm's own pixels are the outliers); a camera rendering from anywhere
         else -- wrong mount, wrong convention, a pose that does not follow the
-        robot -- puts it decimetres off. That is the failure that would
-        otherwise only show up as a map full of phantom obstacles.
+        robot, a neighbouring cell in view -- puts it decimetres off. That is
+        the failure that would otherwise only show up as a map full of
+        phantom obstacles. Every environment is checked.
         """
+        env_ids = range(self.num_envs) if env_ids is None else env_ids
         for name in self.cams:
-            median, near, n = self.camera_alignment(name, env)
+            rows = [(e, *self.camera_alignment(name, e)) for e in env_ids]
+            e, median, near, n = max(rows, key=lambda r: r[1])
             ok = median < 0.005
+            where = f" (worst of {len(rows)} envs: env {e})" if len(rows) > 1 else ""
             self.log(f"camera {name}: {n} depth pixels, median {median * 1000:.1f} mm "
-                     f"from the scene's surfaces, {near * 100:.0f}% within 10 mm "
+                     f"from the scene's surfaces, {near * 100:.0f}% within 10 mm{where} "
                      f"({'AGREE' if ok else 'WRONG'})")
             if not ok:
                 raise RuntimeError(
-                    f"camera {name}'s depth does not line up with the scene through the "
-                    f"pose the mapper would pair it with (median {median * 1000:.0f} mm off). "
-                    f"Fix the mount, do not adjust the check.")
+                    f"camera {name}'s depth in env {e} does not line up with the scene "
+                    f"through the pose the mapper would pair it with (median "
+                    f"{median * 1000:.0f} mm off). Fix the mount, do not adjust the check.")
 
     def view(self, env=0):
         return CellView(self, env)

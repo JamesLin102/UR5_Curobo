@@ -8,9 +8,10 @@ registered as a gymnasium task:
 env = gymnasium.make("Isaac-PickPlace-Ur5Robotiq-v0", cfg=cfg)   # a DirectRLEnv
 ```
 
-**Status: phase 1, one environment.** It reproduces the Isaac Sim backend's
-results (below) and is built so that phase 2, many environments at once, is an
-extension rather than a rewrite. See [Phase 2](#phase-2-many-environments).
+**Status: many environments.** One cell reproduces the Isaac Sim backend's
+results (below); N cells run side by side in lockstep, each with its own
+cameras, map and planner server, and pass the same checks in every cell. See
+[Many environments](#many-environments).
 
 Both backends live side by side. Nothing about the Isaac Sim one changed except
 that the pieces both need moved into shared modules.
@@ -62,9 +63,25 @@ own (`--headless`, `--device`, …) and a few for this backend: `--markers`,
 `--enable_cameras` is implied whenever mapping is on. The slab to drag is
 `/World/envs/env_0/drag_me`.
 
-**Use `--device cpu` for one cell.** GPU PhysX costs about 12 ms per step for a
-single articulation, CPU PhysX 0.8 ms — the GPU only pays for itself once there
-are many environments to step at once.
+**Use `--device cpu`.** GPU PhysX costs about 12 ms a step for one articulation
+and about 20 ms for 8 or 32, while CPU PhysX is 0.8 ms for one: with this
+robot's 64/16 solver iterations the GPU's fixed cost per step dominates, and
+at 32 environments CPU is still about 3× faster (measured below).
+
+Several cells at once: one planner server per cell, then `--num_envs`:
+
+```bash
+python scripts/planner_servers.py --num 4
+```
+
+```bash
+python scripts/lab/isaaclab_client.py --device cpu --num_envs 4 --camera-class tiled
+```
+
+Every cell shuttles its own block. One env step is one leg in every cell; the
+oracle picks each cell's next leg from its goal. With `--no-mapping` the
+planner's world is the static scene for everybody, so cells can share servers:
+`planner_servers.py --num 2 --no-mapping` and `--num-servers 2`.
 
 ## Use it from code
 
@@ -106,6 +123,8 @@ mapping, cameras, markers, depth lag, planner mode.
 python tools/lab_inspect_robot.py --headless --mapping   # the robot, cameras and gripper, no planner
 python tools/check_pick_place_lab.py --device cpu        # the whole loop, both modes
 python tools/check_pick_place_lab.py --device cpu --both-backends   # A/B, side by side
+python tools/check_pick_place_lab.py --device cpu --num-envs 4 --camera-class tiled
+python tools/lab_inspect_robot.py --headless --device cpu --num_envs 4 --replicate-physics --mapping
 python tools/check_lab_modularity.py                     # import rules, registry, every scene
 python tools/test_leg_ops.py                             # shared task logic vs the Isaac Sim env
 ```
@@ -201,12 +220,13 @@ scripts/
   demo_loop.py         the demo loop, for any CellLike
   sim_usd.py           USD fixes both backends make (4-bar pin, pads, URDF colours, frames, overlay)
   urdf_frames.py       frame arithmetic read off the URDF
+  planner_servers.py   N planner_server.py processes on consecutive ports
   lab/
     robots.py          rig.ROBOTS[key] -> ArticulationCfg, any robot
     scene_cfg.py       SceneSpec -> assets under /World/envs/env_*, cameras by kind
     cell.py            LabCell (N environments) and CellView (one, as a CellLike)
     programs.py        ops interpreted one physics tick at a time, all envs together
-    planner_pool.py    the planner per environment (one server today)
+    planner_pool.py    the planner per environment: a server each, or shared
     markers.py         goal markers the depth cameras cannot see
     cell_cfg.py        CellCfg: every runtime knob
     app.py             the shared command line
@@ -235,43 +255,69 @@ A task supplies `programs(actions)` (one list of `cell_api` ops per environment)
 `reset_cells()`, and the usual `_get_dones` / `_get_rewards` / `_get_observations`.
 The cell runs every environment's program in lockstep.
 
-## Phase 2: many environments
+## Many environments
 
-Phase 1 was built so this is an extension:
+What makes N cells N copies of one:
 
-- Every per-cell prim is already under `/World/envs/env_*`, and every pose the
-  planner or a task sees is env-local (`scene.env_origins`).
-- The cell's state is already `(num_envs, …)` arrays, the primitives take
-  `env_ids`, and `programs.py` already advances every environment's program one
-  tick at a time and batches the planner requests made on the same tick.
-- USD edits (the pins, the pad material) are applied to every environment's
-  robot after cloning.
+- Every per-cell prim is under `/World/envs/env_*`, and every pose the planner or
+  a task sees is env-local (`scene.env_origins`). The cells stand 4 m apart,
+  outside each other's mapper grid and camera range.
+- The cell's state is `(num_envs, …)` arrays and the primitives take `env_ids`.
+  `programs.py` advances every environment's program one tick at a time,
+  and sends the planner requests made on the same tick to their servers in
+  parallel.
+- **One planner server per cell** (`scripts/planner_servers.py`, ports
+  `PORT + i`), because one server holds one map and a cell's map must hold only
+  what its own cameras saw. Planning is exactly the single-cell server's. With
+  mapping off the world is the static scene for all, and `CellCfg.num_servers`
+  lets cells share: env `e` uses server `e % num_servers`.
+- USD edits (the pins, the pad material, the URDF colours) go onto every cell's
+  robot after cloning. With `--replicate-physics` the PhysX replicator carries
+  the pins too: closing on nothing, the gripper spread is 0.000 in every cell.
+- The camera alignment check runs on every cell, at start-up and after the first
+  reset.
 
-What is left:
+Measured 2026-09-24, `tools/check_pick_place_lab.py`, two seeds, every cell
+passing the single-cell criteria (every leg plans, every pick holds, every
+place delivers; mapped routes ≥ −10 mm from the slab):
 
-1. **The planner server.** One server holds one map. The plan: `--num-envs N` on
-   the server; cuRobo 0.8's `BatchMotionPlanner` (`multi_env=True`,
-   `max_batch_size=N`; a private module in 0.8,
-   `curobo/_src/motion/motion_planner_batch.py`) with each environment's ESDF
-   loaded into its own collision world (`load_collision_model(world_i,
-   env_idx=i)`), and one `Mapping` per environment. A backward-compatible protocol: an optional `"env"` field on
-   every op (default 0), `plan_batch` / `ik_batch` ops, `num_envs` in the
-   handshake. At N = 1 it keeps today's `MotionPlanner` path, so today's numbers
-   stay valid. The batch planner does not retry, so plan failures need
-   re-measuring. A `BatchPool` in `planner_pool.py` is the client side.
-   (For bring-up, one server per environment on `PORT + i` works without planner
-   changes, but does not scale on 16 GB.)
-2. **Replicated physics and the pins.** With `replicate_physics=True`, whether the
-   PhysX replicator carries the `ExcludeFromArticulation` pin joints must be
-   tested (spread ≤ 0.01 in every environment, closing on nothing). If not, keep
-   `replicate_physics=False`: slower to start, correct by construction.
-3. **Cameras.** 2 cameras × 640×480 per environment is the real cost. Switch to
-   `--camera-class tiled` (one render product; `distance_to_image_plane` is
-   supported), render only on the steps that fuse, and lower the resolution in
-   the scene if needed.
-4. **Environment spacing** ≥ 3.5 m, so no cell's cameras map its neighbour
-   (4.0 m today).
+| cells | mapping | device, cameras | servers | one seed (all cells) | slab clearance, worst | placement |
+|---|---|---|---|---|---|---|
+| 1 | on | cpu, Camera | 1 | 11–12 s | +2 mm | 2.2–2.6 mm |
+| 2 | on | cpu, Camera | 2 | 19–21 s | −4 mm | 2.3–2.6 mm |
+| 4 | on | cpu, Camera | 4 | 35–37 s | −4 mm | 2.2–2.6 mm |
+| 4 | on | cpu, TiledCamera | 4 | 20–22 s | −4 mm | 2.2–2.6 mm |
+| 4 | on | cuda:0, TiledCamera | 4 | 42–43 s | −4 mm | 1.2–2.8 mm |
+| 1 | off | cpu | 1 | 0.8–1.4 s | — | 2.3–2.7 mm |
+| 8 | off | cpu | 2 | 3.5–5.2 s | — | 2.2–2.8 mm |
+| 8 | off | cuda:0 | 2 | 19–21 s | — | 1.1–2.9 mm |
+| 32 | off | cpu | 2 | 7–8 s | — | 2.2–2.7 mm |
+| 32 | off | cuda:0 | 2 | 22–23 s | — | 1.1–2.9 mm |
+| 4 | off | cpu, `--replicate-physics` | 4 | 2–4 s | — | 2.3–2.7 mm |
 
-Lockstep means one env step takes as long as the slowest environment's leg; the
+So with mapping off, 32 cells do a seed in about 7 s where one cell takes about
+1 s: 4–5× the throughput. With mapping on the cameras are the cost —
+TiledCamera, one render product for all of them, nearly halves it — and four
+cells get through about twice what one does.
+
+Limits and what would lift them:
+
+- **Servers.** A planner server takes about 2 GB of RAM and 0.55 GB of GPU
+  memory, so with mapping on (one each) this 31 GB machine runs about 8 cells.
+  Beyond that, one server planning for every cell at once: cuRobo 0.8's
+  `BatchMotionPlanner` (`multi_env=True`, `max_batch_size=N`; a private module,
+  `curobo/_src/motion/motion_planner_batch.py`) with each cell's ESDF in its own
+  collision world (`load_collision_model(world_i, env_idx=i)`) and a map per
+  cell. It does not retry, so plan failures would need re-measuring. It would be
+  one more `PlannerPool` in `lab/planner_pool.py`; nothing above that changes.
+- **GPU PhysX** has a fixed cost of about 20 ms a step at these solver
+  iterations, however many cells. CPU wins at every size measured; the crossover
+  is somewhere past 32.
+- **Rendering.** Every step renders every camera, though only every
+  `map_every`-th step fuses. Rendering only on fusing steps (headless) and
+  lower-resolution cameras are the next savings.
+
+Lockstep means one env step takes as long as the slowest cell's leg; the
 others hold still meanwhile. That keeps the vector-env contract rsl_rl, skrl and
-Stable-Baselines3 assume.
+Stable-Baselines3 assume (the rsl_rl wrapper takes the 32-cell environment:
+observations `(32, 25)`).

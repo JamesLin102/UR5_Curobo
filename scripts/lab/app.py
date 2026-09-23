@@ -34,8 +34,13 @@ def add_args(ap, task="PickPlace"):
                     help="sim steps the depth image trails the physics by")
     ap.add_argument("--markers", choices=("overlay", "usd", "off"), default=None)
     ap.add_argument("--camera-class", choices=("camera", "tiled"), default=None)
-    ap.add_argument("--planner", choices=("single", "none"), default=None,
+    ap.add_argument("--planner", choices=("server", "none"), default=None,
                     help="'none': build and step the cell without a planner server")
+    ap.add_argument("--num-servers", type=int, default=None,
+                    help="planner servers to use (default: one per env; with "
+                         "--no-mapping fewer may be shared)")
+    ap.add_argument("--replicate-physics", action="store_true",
+                    help="clone env_0's physics to the others instead of parsing each")
     ap.add_argument("--merge-inertial", action="store_true",
                     help="also merge fixed links WITH mass (Isaac Lab's default import)")
     ap.add_argument("--force-usd", action="store_true",
@@ -58,6 +63,7 @@ def make_env_cfg(args):
     cfg = gym.spec(tid).kwargs["env_cfg_entry_point"]()
     cfg.sim.device = args.device
     cfg.scene.num_envs = args.num_envs
+    cfg.scene.replicate_physics = args.replicate_physics
     apply_cell_args(cfg.cell, args)
     return tid, cfg
 
@@ -71,7 +77,7 @@ def apply_cell_args(cell, args):
     cell.force_usd = args.force_usd
     for flag, field in (("map_every", "map_every"), ("depth_lag", "depth_lag"),
                         ("markers", "markers"), ("camera_class", "camera_class"),
-                        ("planner", "planner_mode")):
+                        ("planner", "planner_mode"), ("num_servers", "num_servers")):
         value = getattr(args, flag)
         if value is not None:
             setattr(cell, field, value)

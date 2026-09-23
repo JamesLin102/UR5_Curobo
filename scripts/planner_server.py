@@ -651,7 +651,11 @@ def main():
                     help="build the planner without CUDA graphs")
     ap.add_argument("--allow-curobo-drift", action="store_true",
                     help="run on a cuRobo other than rig.CUROBO_COMMIT")
+    ap.add_argument("--port", type=int, default=PORT,
+                    help="one server holds one map, so each environment of a "
+                         "multi-environment run gets its own: see planner_servers.py")
     args = ap.parse_args()
+    port = args.port
     check_curobo_pin(args.allow_curobo_drift)
 
     scene = scenes.load(args.scene)
@@ -677,21 +681,21 @@ def main():
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
-        srv.bind((HOST, PORT))
+        srv.bind((HOST, port))
     except OSError as exc:
         # Closing the Isaac Sim window does not stop this process, so the
         # usual way to hit this is a server left over from the last run. The
         # trap is that the new server dies here while the sim happily connects
         # to the OLD one and plans against whatever scene THAT loaded.
         raise SystemExit(
-            f"[planner] cannot bind {HOST}:{PORT} ({exc}).\n"
+            f"[planner] cannot bind {HOST}:{port} ({exc}).\n"
             f"[planner] A previous planner_server is probably still running -- "
             f"closing the sim window does not stop it.\n"
-            f"[planner]   ss -ltnp | grep {PORT}     # see what holds it\n"
-            f"[planner]   fuser -k {PORT}/tcp        # stop it"
+            f"[planner]   ss -ltnp | grep {port}     # see what holds it\n"
+            f"[planner]   fuser -k {port}/tcp        # stop it"
         ) from exc
     srv.listen(1)
-    print(f"[planner] listening on {HOST}:{PORT}  (Ctrl-C to stop)", flush=True)
+    print(f"[planner] listening on {HOST}:{port}  (Ctrl-C to stop)", flush=True)
 
     # Never block in a socket call for more than half a second. This process
     # has ~60 threads, most of them CUDA's and torch's, and the kernel hands

@@ -5,7 +5,8 @@ legs, same rewards, same observation -- because both are pick_place_task. One
 step is one LEG per environment: a pick if its gripper is empty, a place if
 it is holding something.
 
-    action  (num_envs, 4) [x, y, z, yaw], in the scene's coordinates; or in
+    action  (num_envs, 4) [x, y, z, yaw], in each cell's own (env-local)
+            coordinates -- the scene's; or in
             [-1, 1] with cfg.action_normalized, for RL libraries whose
             policies output roughly N(0, 1)
     obs     {"policy": (num_envs, 25)}, see pick_place_task.OBS_DIM
@@ -126,7 +127,9 @@ class PickPlaceEnv(CellEnv):
 
     def reset_cells(self, env_ids, options):
         if "block_on" in options:
-            start = np.full(len(env_ids), int(options["block_on"]))
+            # One target for all, or one per environment (indexed by env id).
+            v = options["block_on"]
+            start = np.array([int(v[e]) if np.ndim(v) else int(v) for e in env_ids])
         else:
             start = self._rng.integers(len(self.scene_spec.targets), size=len(env_ids))
         o = self.cell.reset(env_ids, [ResetOptions(

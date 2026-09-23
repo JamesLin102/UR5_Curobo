@@ -10,14 +10,17 @@ The cell only ever talks to this interface, so how many servers there are and
 whether a request is batched is decided here and nowhere else. numpy and the
 socket client only -- planning itself stays in planner_server.py.
 
-    SinglePool   one planner_server.py: one map, so one environment
+    ServerPool   planner_server.py processes, one per environment (one map
+                 each), or fewer shared ones when mapping is off
     NullPool     no planner; every plan and IK fails. For tools that only
                  need the stage.
 
-A multi-environment server (batched plan/ik, a map per environment) is one
-more class here, chosen by CellCfg.planner_mode.
+A single server that plans for every environment at once (cuRobo's batch
+planner, a map per environment) would be one more class here, chosen by
+CellCfg.planner_mode, and nothing above this file would change.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional, Sequence
 
 import numpy as np
@@ -50,38 +53,77 @@ class PlannerPool:
         return {}
 
 
-class SinglePool(PlannerPool):
-    """One planner_server.py. It holds one map, so it can serve one environment."""
+class ServerPool(PlannerPool):
+    """planner_server.py processes on consecutive ports: env e -> server e % k.
+
+    One server holds one map, so with mapping on every environment needs its
+    own (k = num_envs: scripts/planner_servers.py starts them). With mapping
+    off the world is the static scene for everybody, and k may be smaller --
+    down to one server for all.
+
+    Requests made on the same tick go out to their servers together and are
+    collected together, so N environments plan in parallel rather than one
+    after another.
+    """
 
     def __init__(self, cell, num_envs, log=print):
-        if num_envs != 1:
+        k = cell.num_servers or num_envs
+        if cell.mapping and k != num_envs:
             raise ValueError(
-                f"planner_mode 'single' serves one environment, not {num_envs}: the "
-                f"server keeps one map, and cells sharing it would map each other")
-        self.client = Planner(cell.scene, host=cell.host, port=cell.port, log=log)
+                f"with mapping on every environment needs its own server (its own "
+                f"map): num_servers is {k}, num_envs is {num_envs}")
+        if k > num_envs:
+            raise ValueError(f"num_servers {k} is more than num_envs {num_envs}")
+        self.clients = [Planner(cell.scene, host=cell.host, port=cell.port + i,
+                                log=log) for i in range(k)]
+        self._threads = ThreadPoolExecutor(max_workers=k) if k > 1 else None
+
+    def _client(self, env):
+        return self.clients[env % len(self.clients)]
+
+    def _each(self, env_ids, call):
+        """call(client, k) for every request; concurrently across servers.
+
+        Requests for the same server stay in order on its one connection.
+        """
+        by_client = {}
+        for k, e in enumerate(env_ids):
+            by_client.setdefault(int(e) % len(self.clients), []).append(k)
+        out = [None] * len(env_ids)
+
+        def run(ci, ks):
+            for k in ks:
+                out[k] = call(self.clients[ci], k)
+
+        if self._threads is None or len(by_client) == 1:
+            for ci, ks in by_client.items():
+                run(ci, ks)
+        else:
+            for f in [self._threads.submit(run, ci, ks) for ci, ks in by_client.items()]:
+                f.result()
+        return out
 
     def joint_names(self, home, target):
         # The reply to any plan carries the joint order, success or not.
         if target is None:
             raise ValueError("the scene has no targets to probe the planner with")
-        return list(self.client.plan(home, list(target))["joint_names"])
+        return list(self.clients[0].plan(home, list(target))["joint_names"])
 
     def plan(self, env_ids, q, targets):
-        return [self.client.plan(q[k], [float(v) for v in targets[k]])
-                for k in range(len(env_ids))]
+        return self._each(env_ids, lambda c, k: c.plan(q[k], [float(v) for v in targets[k]]))
 
     def ik(self, env_ids, q, targets):
-        return [self.client.ik(q[k], [float(v) for v in targets[k]])
-                for k in range(len(env_ids))]
+        return self._each(env_ids, lambda c, k: c.ik(q[k], [float(v) for v in targets[k]]))
 
     def map_frame(self, env, q, depth, K, camera):
-        self.client.map_frame(q, depth, K, camera)
+        self._client(env).map_frame(q, depth, K, camera)
 
     def reset_map(self, env_ids):
-        self.client.reset_map()
+        for ci in sorted({int(e) % len(self.clients) for e in env_ids}):
+            self.clients[ci].reset_map()
 
     def stats(self, env):
-        return self.client.stats()
+        return self._client(env).stats()
 
 
 class NullPool(PlannerPool):
@@ -107,7 +149,7 @@ class NullPool(PlannerPool):
 
 
 POOLS = {
-    "single": SinglePool,
+    "server": ServerPool,
     "none": NullPool,
 }
 

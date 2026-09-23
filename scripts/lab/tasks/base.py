@@ -19,7 +19,8 @@ step just holds for one tick. That is what the checks under tools/ use.
 
 Reset options: gymnasium's reset(options=...) is ignored by DirectRLEnv, so
 it is kept here and handed to reset_cells(); `next_reset_options` does the
-same for the auto-reset that step() performs on a finished environment.
+same for the auto-reset that step() performs on a finished environment. An
+option may be one value for every environment or a list indexed by env id.
 """
 
 import numpy as np

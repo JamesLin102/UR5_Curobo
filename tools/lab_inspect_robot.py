@@ -4,6 +4,7 @@
     python tools/lab_inspect_robot.py --headless --mapping         # + camera checks
     python tools/lab_inspect_robot.py --headless --merge-inertial  # Isaac Lab's merge
     python tools/lab_inspect_robot.py --headless --robot KEY       # any rig.ROBOTS entry
+    python tools/lab_inspect_robot.py --headless --num_envs 4 --replicate-physics
 
 Builds the cell through the task-free lab.tasks.base.CellEnv with no planner
 (every plan would fail; nothing here plans), then reports:
@@ -17,6 +18,9 @@ Builds the cell through the task-free lab.tasks.base.CellEnv with no planner
   gripper             closing on nothing: the spread across the linkage's
                       joints as a fraction of a full close (0.003 with the
                       pin working, >= 0.118 without it)
+
+With several environments HOME and the gripper are checked in every one --
+which is how to tell whether the pins survive --replicate-physics.
   warp                which Warp this process runs -- Isaac Sim's 1.8.2, or
                       the process is set up wrong
 
@@ -67,6 +71,8 @@ def main():
 
     cfg = CellEnvCfg()
     cfg.sim.device = ARGS.device
+    cfg.scene.num_envs = ARGS.num_envs
+    cfg.scene.replicate_physics = ARGS.replicate_physics
     lab_app.apply_cell_args(cfg.cell, ARGS)
     env = CellEnv(cfg)
     cell = env.cell
@@ -121,25 +127,33 @@ def main():
     if grip.get("linkage"):
         report(len(cell.handles.pins) == 2, f"linkage pins: {cell.handles.pins}")
 
-    # HOME drift, holding still.
-    home = np.asarray(cell.spec.home)
-    worst = 0.0
-    view = cell.view(0)
-    for _ in range(ARGS.hold_steps):
-        view.idle(1)
-        worst = max(worst, float(np.abs(view.observe().q - home).max()))
-    report(worst < 0.01, f"holding HOME for {ARGS.hold_steps} steps: worst joint "
-                         f"{worst * 1000:.1f} mrad off")
+    from cell_api import Grip
 
-    # Gripper closing on nothing: does the 4-bar stay together?
-    g = view.grip(close=True)
-    frac = np.array([v / grip["closed"] for v in g.spread.values()])
-    say("  closed: " + " ".join(f"{n}={v:+.3f}" for n, v in g.spread.items()))
-    report(g.settled, f"gripper settled after {g.steps} steps, error {g.error:.4f} rad")
-    report(frac.max() - frac.min() < 0.02,
-           f"gripper spread {frac.max() - frac.min():.3f} of a full close "
-           f"({frac.min():.3f}..{frac.max():.3f}); pinned and working is ~0.003")
-    view.grip(close=False)
+    # HOME drift, holding still, in every environment.
+    ids = list(range(cell.num_envs))
+    home = np.asarray(cell.spec.home)
+    worst = np.zeros(len(ids))
+    for _ in range(ARGS.hold_steps):
+        cell.idle(ids, 1)
+        worst = np.maximum(worst, np.abs(cell.observe(ids).q - home).max(axis=1))
+    e = int(worst.argmax())
+    report(worst.max() < 0.01, f"holding HOME for {ARGS.hold_steps} steps: worst joint "
+                               f"{worst.max() * 1000:.1f} mrad off"
+                               + (f" (worst of {len(ids)} envs: env {e})" if len(ids) > 1 else ""))
+
+    # Gripper closing on nothing: does the 4-bar stay together, everywhere?
+    results = cell.run(ids, [[Grip(close=True)] for _ in ids])
+    for e, r in zip(ids, results):
+        g = r.results[0][1]
+        frac = np.array([v / grip["closed"] for v in g.spread.values()])
+        where = f"env {e}: " if len(ids) > 1 else ""
+        if e == 0:
+            say("  closed: " + " ".join(f"{n}={v:+.3f}" for n, v in g.spread.items()))
+        report(g.settled, f"{where}gripper settled after {g.steps} steps, error {g.error:.4f} rad")
+        report(frac.max() - frac.min() < 0.02,
+               f"{where}gripper spread {frac.max() - frac.min():.3f} of a full close "
+               f"({frac.min():.3f}..{frac.max():.3f}); pinned and working is ~0.003")
+    cell.run(ids, [[Grip(close=False)] for _ in ids])
 
     say(f"{'ALL PASSED' if not FAILED else f'{len(FAILED)} FAILED'}")
     sys.stdout.flush()

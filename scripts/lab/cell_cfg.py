@@ -27,13 +27,17 @@ class CellCfg:
     depth_lag: int = 0
     verbose: bool = True
 
-    # Where plans come from. "single": one planner_server.py over the socket,
-    # which serves one map, so one environment. "none": no planner at all --
-    # the cell builds and steps, and every plan or IK request fails. For tools
-    # that only look at the stage.
-    planner_mode: str = "single"
+    # Where plans come from. "server": planner_server.py processes, env e on
+    # port + (e % num_servers) -- scripts/planner_servers.py starts N of them.
+    # "none": no planner at all -- the cell builds and steps, and every plan
+    # or IK request fails. For tools that only look at the stage.
+    planner_mode: str = "server"
     host: str = HOST
     port: int = PORT
+    # How many servers. 0: one per environment, which mapping on requires
+    # (each holds one cell's map). With mapping off the planner's world is the
+    # static scene for all of them, so fewer -- down to 1 -- can be shared.
+    num_servers: int = 0
 
     camera_class: str = "camera"        # "camera" | "tiled" (TiledCamera: one render product)
     markers: str = "overlay"            # goal markers: "overlay" | "usd" | "off"
