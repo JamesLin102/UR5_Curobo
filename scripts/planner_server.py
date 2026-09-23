@@ -384,6 +384,9 @@ class Mapping:
         # Where the map actually IS, in z. "N voxels" says nothing about
         # whether they are the obstacle, the table creeping back in over
         # floor_z, or the arm mapping itself.
+        # Rebuilt from scratch every update: with an empty map the z branch
+        # below never assigns it, and the floor-cut suffix used to pile up.
+        self.z_profile = ""
         if voxels.centers is not None and len(voxels.centers):
             z = voxels.centers[:, 2]
             edges = [0.0, 0.05, 0.10, 0.15, 0.25, 0.40, 0.60]
