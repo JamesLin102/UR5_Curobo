@@ -80,7 +80,7 @@ TUNED_CSPACE = {
 #
 # So they live here, and planner_server drops them from the PLANNER's copy of
 # the config only. See build() there.
-SEGMENTER_ONLY = ["base_link_inertia"]
+SEGMENTER_ONLY = list(ROBOTS["ur5_robotiq"]["arm"]["mask_only_links"])
 
 ARM_SPHERES = {
     "base_link_inertia": 8,
@@ -340,7 +340,7 @@ def main():
 
     k["tool_frames"] = ["grasp_frame", "camera_link"]
     k["lock_joints"] = {j: GRIPPER_LOCK_RAD * mult
-                        for j, mult in ROBOTS["ur5_robotiq"]["gripper_joints"].items()}
+                        for j, mult in ROBOTS["ur5_robotiq"]["gripper"]["joints"].items()}
 
     ignore = {kk: list(v) for kk, v in (k.get("self_collision_ignore") or {}).items()}
     present = set(k["collision_link_names"])

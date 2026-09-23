@@ -3,7 +3,6 @@ import os, sys, time, torch
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, f"{ROOT}/scripts")
 from rig import DEFAULT_ROBOT, ROBOTS  # noqa: E402
-from planner_server import SEGMENTER_ONLY  # noqa: E402
 from curobo.types import ContentPath, JointState, Pose, GoalToolPose
 from curobo.kinematics import Kinematics, KinematicsCfg
 from curobo.scene import Scene, Cuboid
@@ -41,8 +40,9 @@ planner_dict["robot_cfg"]["kinematics"]["tool_frames"] = [tool]
 # base is bolted to the table, so a planner that checks them calls every
 # configuration a collision. planner_server.build() drops the same links.
 pk = planner_dict["robot_cfg"]["kinematics"]
-pk["collision_link_names"] = [n for n in pk["collision_link_names"] if n not in SEGMENTER_ONLY]
-for n in SEGMENTER_ONLY:
+pk["collision_link_names"] = [n for n in pk["collision_link_names"]
+                             if n not in spec["arm"]["mask_only_links"]]
+for n in spec["arm"]["mask_only_links"]:
     pk["collision_spheres"].pop(n, None)
 planner = MotionPlanner(MotionPlannerCfg.create(
     robot=planner_dict, scene_model=scene, use_cuda_graph=True))

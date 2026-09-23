@@ -26,6 +26,8 @@ Measured: the gripper stalls at +0.506 rad against the 45 mm block (commanded
     DISPLAY=:1 python scripts/isaacsim_client.py --robot ur5_robotiq --scene pick_place
 """
 
+from rig import DEFAULT_ROBOT, ROBOTS
+
 from .base import SceneSpec, WatchBox
 
 # Rest pose. shoulder_lift and elbow are raised relative to the obvious
@@ -209,19 +211,20 @@ DESCEND = 0.125
 
 # Where grasp_frame has to end up, which is NOT the block's centre.
 #
-# grasp_frame sits at the middle of the finger pads WITH THE GRIPPER OPEN --
-# 185.3 mm from tool0, measured off left_finger_tip.stl. The 2F-85's fingers
-# swing rather than translate, so closing carries the pads 13.5 mm further
-# out: the pad face goes from tool0 166.3..204.3 to 179.8..217.8. Aim at the
-# block's centre and the pads therefore ARRIVE 13.5 mm low.
+# grasp_frame sits at the middle of the finger pads WITH THE GRIPPER OPEN, and
+# closing carries the pads further out: 13.5 mm on a 2F-85, whose fingers
+# swing rather than translate. Aim at the block's centre and the pads
+# therefore ARRIVE that much low. Those pad numbers belong to the gripper, so
+# they come from rig.ROBOTS -- for the DEFAULT robot, which is the one these
+# grasp heights are aimed for. Another gripper wants its own heights.
 #
 # That was enough to break every grasp. The pedestal is 140 mm across and the
 # gripper only opens to 85, so the pads are inside its footprint the whole
 # way down; aimed at the centre they ended 10 mm BELOW its top face, stalled
 # against it at 0.04 rad of the 0.8 commanded, and shoved the block off
 # instead of lifting it.
-PAD_HALF = 0.019          # half the pad face, 166.3..204.3 mm
-PAD_CLOSE_DROP = 0.0135   # how much further out the pads sit once closed
+PAD_HALF = ROBOTS[DEFAULT_ROBOT]["gripper"]["pad_half"]
+PAD_CLOSE_DROP = ROBOTS[DEFAULT_ROBOT]["gripper"]["pad_close_drop"]
 # 6 mm was not enough: at that height one finger caught the pedestal on the
 # way in and stalled at 0.011 rad while the other closed to 0.724, so the
 # block was carried pinched against a single pad. The pad face is 38 mm and

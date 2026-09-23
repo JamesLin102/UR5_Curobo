@@ -50,10 +50,6 @@ from curobo._src.robot.loader.util import load_robot_yaml  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Links whose collision spheres exist only so RobotSegmenter can mask them out
-# of the depth image. The planner never sees them.
-SEGMENTER_ONLY = ("base_link_inertia",)
-
 # Set once in main(). Used ONLY to report how close a plan came to a body the
 # planner was never told about -- never to plan with.
 SCENE_FOR_REPORT = None
@@ -431,10 +427,13 @@ def build(robot_key, scene, use_cuda_graph=True):
     # either one puts the demo back in a state that looks like a different
     # bug. See tools/build_ur5_robotiq_config.py, SEGMENTER_ONLY.
     pk = planner_dict["robot_cfg"]["kinematics"]
-    dropped = [n for n in pk["collision_link_names"] if n in SEGMENTER_ONLY]
+    # Spheres that exist only so RobotSegmenter can mask them out of the
+    # depth image (rig.ROBOTS[...]["arm"]["mask_only_links"]).
+    mask_only = set(spec["arm"]["mask_only_links"])
+    dropped = [n for n in pk["collision_link_names"] if n in mask_only]
     if dropped:
         pk["collision_link_names"] = [n for n in pk["collision_link_names"]
-                                      if n not in SEGMENTER_ONLY]
+                                      if n not in mask_only]
         for n in dropped:
             pk["collision_spheres"].pop(n, None)
         print(f"[planner] spheres kept for masking, hidden from the planner: "

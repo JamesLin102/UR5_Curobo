@@ -64,11 +64,12 @@ def launch(headless=False, width=1600, height=900):
     return _APP
 
 
-# The gripper joints' <limit velocity="..."> in the URDF. Used to budget how
-# many sim steps a full open or close actually needs; commanding it faster
-# just leaves the joint short of the target when the next plan starts.
-GRIPPER_RAD_PER_S = 2.0
-
+# --- the Robotiq 2F-85's loop closure (gripper "linkage": "robotiq_2f85") ----
+#
+# The numbers for the arm and gripper -- drive gains, which joints the pin
+# owns, pad geometry -- live in rig.ROBOTS with the measurements behind them.
+# What stays here is code that only makes sense for this mechanism.
+#
 # The 2F-85 is two mirrored 4-bar linkages. A 4-bar needs a loop closure, and
 # URDF is a tree, so in the model the inner knuckle hangs off the base as its
 # own branch with nothing tying it to the finger tip. Under load the branches
@@ -88,60 +89,6 @@ GRIPPER_RAD_PER_S = 2.0
 # a parallelogram gives D = B + (C - A) exactly. No mesh fitting, no closest-
 # surface-point search, and it stays right if the URDF is regenerated.
 GRIPPER_PIN_AXIS = "Y"      # every 2F-85 joint turns about this link's Y
-
-# The joints the PIN is responsible for rather than the drive. They are not
-# commanded, and they must not be HELD either: the importer gives every joint
-# a position drive at default_drive_strength, so left alone they are pinned to
-# zero at 1e6 stiffness and spend the whole grasp fighting the loop closure.
-# That fight is what makes the linkage visibly come apart.
-#
-# Measured in free air, closing onto nothing, as the spread across the six
-# joints expressed as a fraction of a full close:
-#
-#     pin only, follower drives left alone : 0.805..0.922, spread 0.118
-#     pin, follower drives zeroed          : 0.997..1.000, spread 0.003
-#
-# The second also reaches its commanded angle, which the first never does.
-PINNED_FOLLOWER = "inner_knuckle_joint"
-
-# Drive stiffness for the gripper joints alone.
-#
-# The importer gives EVERY joint default_drive_strength, which is 1e6 because
-# the arm needs it. A 2F-85 link weighs 14 g, and a 1e6 drive on it simply
-# overpowers the 4-bar's loop closure: the links stop agreeing with each other
-# and the linkage visibly comes apart. Measured as the spread across the six
-# joints while gripping a 45 mm block, which is the thing you can see:
-#
-#     1e6 -> 0.201     1e4 -> 0.191     1e2 -> 0.064
-#     1e5 -> 0.197     1e3 -> 0.099
-#
-# Monotonic, and nothing else moved it: solver iterations (64, 255) changed it
-# by 0.000, and driving two joints instead of four by 0.005.
-PLANNED_JOINTS = ("shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
-                  "wrist_1_joint", "wrist_2_joint", "wrist_3_joint")
-
-# The importer's own stiffness, kept; the damping it does NOT give.
-#
-# A position drive with no damping is an undamped spring, and it rings around
-# a moving target: during a 12 cm vertical move the joints that were told to
-# hold still buzzed instead, reversing direction 37-47 times, and the two that
-# were moving ran in surges rather than at speed. Measured over that move, as
-# velocity sign flips across all six joints and the velocity ripple on
-# wrist_1:
-#
-#     damping    0 -> 138 flips, ripple 0.48, lag  8 mrad
-#               20 ->  19 flips, ripple 0.13, lag  9 mrad
-#               50 ->   0 flips, ripple 0.19, lag 22 mrad
-#              150 ->   0 flips, ripple 0.20, lag 66 mrad
-#
-# 20 is the knee: the joints that should not move stop moving (|v| max
-# 0.00 rad/s, the remaining flips are noise below 0.005), and it costs almost
-# nothing in tracking. 50 buys only sub-visible noise for four times the lag.
-ARM_DRIVE_STIFFNESS = 625.0
-ARM_DRIVE_DAMPING = 20.0
-
-GRIPPER_DRIVE_STIFFNESS = 1.0e2
-GRIPPER_DRIVE_DAMPING = 1.0e1
 
 
 def _gripper_pin_anchors(urdf_path):
@@ -285,7 +232,7 @@ def close_gripper_linkage(stage, prim_path, urdf):
     return made
 
 
-def tune_arm_drives(stage, joints):
+def tune_arm_drives(stage, arm):
     """Give the arm's position drives some damping. They ship with none.
 
     Isaac Sim 5.x ignores the importer's default_drive_strength and
@@ -294,7 +241,8 @@ def tune_arm_drives(stage, joints):
     drive rings around a moving target, which is what makes a slow vertical
     move judder.
     """
-    k, d = ARM_DRIVE_STIFFNESS, ARM_DRIVE_DAMPING
+    k, d = arm["drive_stiffness"], arm["drive_damping"]
+    joints = set(arm["joints"])
     n = 0
     for prim in stage.Traverse():
         if prim.GetName() not in joints:
@@ -307,13 +255,16 @@ def tune_arm_drives(stage, joints):
     print(f"[sim] arm drives: {n} at stiffness {k:g}, damping {d:g}")
 
 
-def tune_gripper_drives(stage, prim_path, joints):
+def tune_gripper_drives(stage, prim_path, gripper):
     """Soften the gripper's drives, and release the ones the pin owns.
 
     Two separate things, both about the same 1e6 default: the followers must
     not be held at all, and the rest must not be held hard enough to tear the
     linkage apart.
     """
+    joints = set(gripper["joints"])
+    follower = gripper.get("pinned_follower")
+    k, d = gripper["drive_stiffness"], gripper["drive_damping"]
     freed, softened = [], []
     for prim in stage.Traverse():
         name = prim.GetName()
@@ -322,16 +273,16 @@ def tune_gripper_drives(stage, prim_path, joints):
         drive = UsdPhysics.DriveAPI.Get(prim, "angular")
         if not drive:
             continue
-        if PINNED_FOLLOWER in name:
+        if follower and follower in name:
             drive.CreateStiffnessAttr().Set(0.0)
             drive.CreateDampingAttr().Set(0.0)
             freed.append(name)
         else:
-            drive.CreateStiffnessAttr().Set(GRIPPER_DRIVE_STIFFNESS)
-            drive.CreateDampingAttr().Set(GRIPPER_DRIVE_DAMPING)
+            drive.CreateStiffnessAttr().Set(k)
+            drive.CreateDampingAttr().Set(d)
             softened.append(name)
     print(f"[sim] gripper drives: {len(softened)} at "
-          f"{GRIPPER_DRIVE_STIFFNESS:g}/{GRIPPER_DRIVE_DAMPING:g}, "
+          f"{k:g}/{d:g}, "
           f"{len(freed)} released to the 4-bar")
     return freed
 
@@ -414,10 +365,14 @@ def build_stage(world, scene, robot_key, urdf):
             color=np.array(colour),
         )
 
-    close_gripper_linkage(world.stage, prim_path, urdf)
-    tune_arm_drives(world.stage, set(PLANNED_JOINTS))
-    tune_gripper_drives(world.stage, prim_path,
-                        set(ROBOTS[robot_key]["gripper_joints"]))
+    spec = ROBOTS[robot_key]
+    linkage = spec["gripper"].get("linkage")
+    if linkage == "robotiq_2f85":
+        close_gripper_linkage(world.stage, prim_path, urdf)
+    elif linkage is not None:
+        raise ValueError(f"{robot_key}: unknown gripper linkage {linkage!r}")
+    tune_arm_drives(world.stage, spec["arm"])
+    tune_gripper_drives(world.stage, prim_path, spec["gripper"])
 
     # Payloads. Real rigid bodies, unlike everything above: they fall, they can
     # be squeezed, and they come away when the gripper closes. High friction on
@@ -439,10 +394,9 @@ def build_stage(world, scene, robot_key, urdf):
             )
             cube.apply_physics_material(grip_mat)
             payload[name] = cube
-        # The finger tip carries the rubber pad; this model has no separate
-        # pad link, so the friction goes on the tip itself.
-        for link in ("robotiq_85_left_finger_tip_link",
-                     "robotiq_85_right_finger_tip_link"):
+        # The pads get the same material. Which links carry them is the
+        # gripper's business -- see rig.ROBOTS.
+        for link in spec["gripper"]["pad_links"]:
             p = world.stage.GetPrimAtPath(f"{prim_path}/{link}/collisions")
             if p.IsValid():
                 UsdShade.MaterialBindingAPI(p).Bind(
@@ -775,7 +729,9 @@ class SimEnv:
             raise RuntimeError(f"planner joints absent from the simulator: {missing}")
         self.arm_idx = [sim_names.index(j) for j in curobo_names]
 
-        coupling_all = self.spec["gripper_joints"]
+        gripper = self.spec["gripper"]
+        coupling_all = gripper["joints"]
+        follower = gripper.get("pinned_follower")
         grip_name = next(iter(coupling_all))
         if grip_name not in sim_names:
             raise RuntimeError(f"gripper joint {grip_name} absent from the simulator")
@@ -795,7 +751,7 @@ class SimEnv:
         # their finger, so the mechanism sets their angle the way it does on the
         # real gripper. Driving them as well would fight that pin.
         coupling = {j: m for j, m in coupling_all.items()
-                    if j in sim_names and PINNED_FOLLOWER not in j}
+                    if j in sim_names and not (follower and follower in j)}
         self.grip_idx_all = np.array([sim_names.index(j) for j in coupling])
         # Every gripper joint, followers included, for reporting. Signed by its
         # multiplier so all six read as "fraction closed" and can be compared.
@@ -805,8 +761,13 @@ class SimEnv:
                                       dtype=np.float32)
         self.grip_mult = np.array(list(coupling.values()), dtype=np.float32)
 
-        self.grip_open = self.spec["gripper_open"]
-        self.grip_closed = self.spec["gripper_closed"]
+        self.grip_open = gripper["open"]
+        self.grip_closed = gripper["closed"]
+        self.grip_speed = gripper["speed"]
+        # Short names for reporting: the joint names without what they share.
+        prefix = os.path.commonprefix(self.all_grip_names)
+        self.grip_short = [n[len(prefix):].removesuffix("_joint")
+                           for n in self.all_grip_names]
         self.log(f"joints: {len(sim_names)} in sim, {len(curobo_names)} planned")
         self.log(f"gripper: {len(coupling)} load-bearing joints driven, "
                  f"{self.grip_open} open .. {self.grip_closed} closed; "
@@ -1046,7 +1007,7 @@ class SimEnv:
 
     def grip(self, close: bool) -> GripResult:
         """Stroke the gripper open or closed, then wait for it to stop."""
-        stroke = int(abs(self.grip_closed - self.grip_open) / GRIPPER_RAD_PER_S / SIM_DT) + 6
+        stroke = int(abs(self.grip_closed - self.grip_open) / self.grip_speed / SIM_DT) + 6
         for i in range(stroke):
             f = (i + 1) / stroke if close else 1 - (i + 1) / stroke
             self.command_gripper(self.grip_open + (self.grip_closed - self.grip_open) * f)
@@ -1059,8 +1020,8 @@ class SimEnv:
         # linkage that has simply stalled on the object look identical in a
         # single number, and they need opposite fixes.
         q_all = self.robot.get_joint_positions()[self.all_grip_idx]
-        spread = {n.split("robotiq_85_")[-1][:-6]: float(v * m)
-                  for n, v, m in zip(self.all_grip_names, q_all, self.all_grip_sign)}
+        spread = {n: float(v * m)
+                  for n, v, m in zip(self.grip_short, q_all, self.all_grip_sign)}
         return GripResult(settled=quiet, steps=waited, target=end, error=err,
                           spread=spread)
 

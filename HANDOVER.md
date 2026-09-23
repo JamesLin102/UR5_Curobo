@@ -256,7 +256,7 @@ contained: it takes the whole articulation with it, and the fingers visibly
 come apart in the viewport. Stripping the tags takes the error count 1 → 0 and
 the articulation builds.
 
-The coupling therefore lives in `rig.ROBOTS[...]["gripper_joints"]` — joint to
+The coupling therefore lives in `rig.ROBOTS[...]["gripper"]["joints"]` — joint to
 multiplier, ±1 — and three consumers derive from it: the URDF builder takes the
 **sign of each joint's limits** from it, the config builder locks all six, and
 the simulator commands all six. Change a multiplier and all three follow.
@@ -971,7 +971,8 @@ invisible to it: it reported "0 on the robot" throughout.
 
 Both halves are needed and they conflict, so they are separated. The spheres
 live in the config for the segmenter; `planner_server.build()` drops them from
-the planner's copy (`SEGMENTER_ONLY`). Removing either half puts the demo back
+the planner's copy (`rig.ROBOTS[...]["arm"]["mask_only_links"]`, once
+`SEGMENTER_ONLY`). Removing either half puts the demo back
 in a state that looks like a different bug.
 
 ### self_mask_margin 0.12 -> 0.18
