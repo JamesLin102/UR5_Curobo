@@ -198,6 +198,37 @@ Headless with mapping off runs about 5× real time on the development machine
 (6 s of motion in 1.2 s); with the cameras on it is about real time, because
 every step has to render.
 
+### As a gymnasium environment
+
+`scripts/pick_place_env.py` wraps that as `PickPlaceEnv(gymnasium.Env)` for
+learning where to grip, with cuRobo doing every motion in between. **One step is
+one leg**: a pick if the gripper is empty, a place if it is holding the block.
+
+```python
+from pick_place_env import PickPlaceEnv, TaskCfg
+from sim_env import EnvCfg
+env = PickPlaceEnv(EnvCfg(mapping=False), TaskCfg(max_legs=8), headless=True)
+obs, info = env.reset(seed=0)              # block on a random pedestal; goal = the other
+obs, reward, terminated, truncated, info = env.step([x, y, z, yaw])
+```
+
+* **action** `[x, y, z, yaw]` — where `grasp_frame` is when the gripper acts,
+  tool pointing down, turned `yaw` about world Z. The env plans to `descend_m`
+  above it, goes straight down by IK, grips, and lifts.
+* **observation** (25) — arm joints, gripper, tool pose, block pose (simulator
+  ground truth), holding, goal position.
+* **reward** — progress (drop in block-to-goal distance), +1 delivered, −1
+  dropped on the table, −0.1 for a leg with no plan or no IK, −0.01 a step. All
+  in `TaskCfg`.
+
+Measured headless: an oracle that grips at the pedestals delivers in 2 steps,
+return +1.778, in about 1.8 s an episode with mapping off and 19 s with it on
+(each reset rescans). It passes gymnasium's API checks except step
+determinism, which a GPU planner and GPU physics cannot give: two runs with the
+same seed and action agree to 1.2e-6 in the observation and exactly in reward,
+and differ in `info["solve_ms"]`. The action box is the physical workspace, not
+[−1, 1]; wrap it with a rescaling wrapper for libraries that expect that.
+
 ---
 
 ## Layout
@@ -213,6 +244,7 @@ scripts/
   sim_env.py                the Isaac Sim side as a library: SimEnv. Must not
                             import cuRobo
   isaacsim_client.py        the demo loop on top of SimEnv
+  pick_place_env.py         PickPlaceEnv: the same cell as a gymnasium env
   proto.py                  length-prefixed framing (depth frames are 1.2 MB)
 
 configs/                    cuRobo v2 robot configs

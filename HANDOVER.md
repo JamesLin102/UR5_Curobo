@@ -661,6 +661,8 @@ scripts/
                             cameras; derives the ROS body pose of each fixed
                             one from its optical pose and checks it.
   isaacsim_client.py        the pick-and-place demo loop on top of SimEnv.
+  pick_place_env.py         PickPlaceEnv(gymnasium.Env): one step = one leg,
+                            action [x, y, z, yaw] where the gripper acts.
   proto.py                  length-prefixed framing (depth frames are 1.2 MB)
 
 tools/  -- model generation (rerun only if the robot changes):

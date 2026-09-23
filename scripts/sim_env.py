@@ -843,6 +843,11 @@ class SimEnv:
     def running(self):
         return _APP.is_running()
 
+    @property
+    def gripper_closed(self):
+        """Whether the last grip() closed -- on the block or on nothing."""
+        return self._closed
+
     def close(self):
         _APP.close()
 
