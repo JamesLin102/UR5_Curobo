@@ -194,9 +194,7 @@ class Mapping:
             for w in scene.watch
         ]
         self.watch_report = ""
-        self.tall = 0
-        self.tall_where = ""
-        self.z_profile = ""
+        self.floor_report = ""
         self.last_q = None
 
     def integrate(self, depth: torch.Tensor, K: torch.Tensor, q: torch.Tensor,
@@ -367,46 +365,12 @@ class Mapping:
             parts.append(f"{n} in {name}{zs}")
         self.watch_report = (", ".join(parts) + ", ") if parts else ""
 
-        # Broader and weaker: anything standing well above the table. Catches
-        # geometry a watched volume no longer covers -- e.g. after it moves.
-        self.tall = 0
-        self.tall_where = ""
-        if voxels.centers is not None and len(voxels.centers):
-            m = voxels.centers[:, 2] > 0.15
-            self.tall = int(m.sum().item())
-            if self.tall:
-                t = voxels.centers[m]
-                lo = t.min(0).values.cpu().numpy()
-                hi = t.max(0).values.cpu().numpy()
-                self.tall_where = (f"x{lo[0]:+.2f}..{hi[0]:+.2f} "
-                                   f"y{lo[1]:+.2f}..{hi[1]:+.2f} "
-                                   f"z{lo[2]:+.2f}..{hi[2]:+.2f}")
-
-        # Where the map actually IS, in z. "N voxels" says nothing about
-        # whether they are the obstacle, the table creeping back in over
-        # floor_z, or the arm mapping itself.
-        # Rebuilt from scratch every update: with an empty map the z branch
-        # below never assigns it, and the floor-cut suffix used to pile up.
-        self.z_profile = ""
-        if voxels.centers is not None and len(voxels.centers):
-            z = voxels.centers[:, 2]
-            edges = [0.0, 0.05, 0.10, 0.15, 0.25, 0.40, 0.60]
-            bins = []
-            for a, b in zip(edges, edges[1:]):
-                bins.append(int(((z >= a) & (z < b)).sum().item()))
-            bins.append(int((z >= edges[-1]).sum().item()))
-            labels = [f"{a:.2f}" for a in edges] + ["+"]
-            self.z_profile = " z:" + " ".join(
-                f"{lab}:{n}" for lab, n in zip(labels, bins) if n)
-            low = voxels.centers[z < 0.15]
-            if len(low):
-                a = low.min(0).values.cpu().numpy()
-                b = low.max(0).values.cpu().numpy()
-                self.z_profile += (f" low<0.15 spans x{a[0]:+.2f}..{b[0]:+.2f}"
-                                   f" y{a[1]:+.2f}..{b[1]:+.2f}")
+        # How much of each camera's last frame fell at or below floor_z and
+        # was dropped before fusion, out of the pixels that had a reading.
+        self.floor_report = ""
         if self.floor_cut:
-            self.z_profile += " | floor cut " + " ".join(
-                f"{c}:{n}/{t}" for c, (n, t) in self.floor_cut.items())
+            self.floor_report = "floor cut " + " ".join(
+                f"{c}:{n}/{t}" for c, (n, t) in self.floor_cut.items()) + ", "
 
         world = static_scene(self.scene)
         if self.occupied > 0:
@@ -774,7 +738,7 @@ def main():
                               f"ESDF {mapping.last_esdf_ms:.1f} ms, "
                               f"{mapping.occupied} voxels, "
                               f"{mapping.watch_report}"
-                              f"{mapping.tall} tall [{mapping.tall_where}]{mapping.z_profile}, "
+                              f"{mapping.floor_report}"
                               f"{mapping.self_hits} on the robot"
                               + ("" if mapping.occupied else " (map empty - "
                                  "planner using static scene only)"), flush=True)

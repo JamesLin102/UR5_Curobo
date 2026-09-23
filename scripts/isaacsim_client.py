@@ -12,7 +12,7 @@ targets; scenes live in scripts/scenes/, and both processes must be started
 with the same --scene.
 
 Start planner_server.py first, then:
-    python scripts/isaacsim_ur5e_demo.py --robot ur5_robotiq
+    python scripts/isaacsim_client.py --robot ur5_robotiq
 """
 
 import argparse
@@ -462,9 +462,8 @@ def build_stage(world):
     # the first fix here, but guides are hidden in the viewport too -- which
     # left a correct map and nothing for a person to look at. An overlay is
     # drawn by a separate pass that render products do not sample, so it solves
-    # both halves: visible to you, invisible to the cameras. A map reporting
-    # "0 tall []" with nothing standing in the cell is what proves the second
-    # half.
+    # both halves: visible to you, invisible to the cameras. Goals that stay
+    # reachable once the map is live are what prove the second half.
     draw_targets(SCENE.targets)
 
     # The bodies the planner is never told about. VisualCuboids, not physics
@@ -736,7 +735,7 @@ def main():
     prim_path, bodies, payload = build_stage(world)
     set_camera_view(eye=[2.0, 1.6, 1.4], target=[0.35, 0.0, 0.35])
 
-    robot = SingleArticulation(prim_path=prim_path, name="ur5e")
+    robot = SingleArticulation(prim_path=prim_path, name="ur5_robotiq")
     world.scene.add(robot)
     cams = {}
     if not ARGS.no_mapping:

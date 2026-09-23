@@ -57,7 +57,7 @@ re-checking the workarounds in §4 first.
 **It runs as two processes, and it has to.** Isaac Sim 5.1 pins Warp 1.8.2;
 cuRobo 0.8 needs Warp >= 1.13; no version satisfies both. So cuRobo lives in
 one process and Isaac Sim in another, talking over a local socket.
-`scripts/isaacsim_ur5e_demo.py` **must never import cuRobo** — HANDOVER §2 has
+`scripts/isaacsim_client.py` **must never import cuRobo** — HANDOVER §2 has
 the version matrix and what breaks.
 
 ---
@@ -71,7 +71,7 @@ python scripts/planner_server.py
 ```
 
 ```bash
-DISPLAY=:1 python scripts/isaacsim_ur5e_demo.py
+DISPLAY=:1 python scripts/isaacsim_client.py
 ```
 
 `pick_place` is the default and only scene. If you add another, both sides need
@@ -179,7 +179,7 @@ scripts/
                             on the other, past a slab only the cameras see
   rig.py                    what is NOT the scene: robots, dt, host/port
   planner_server.py         cuRobo 0.8: planning + mapping service
-  isaacsim_ur5e_demo.py     Isaac Sim client. Must not import cuRobo.
+  isaacsim_client.py        Isaac Sim client. Must not import cuRobo.
   proto.py                  length-prefixed framing (depth frames are 1.2 MB)
 
 configs/                    cuRobo v2 robot configs

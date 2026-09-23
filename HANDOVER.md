@@ -62,10 +62,10 @@ breakage to Isaac Sim's entire extension stack (`core.api`, `core.prims`,
 scripts/planner_server.py     imports cuRobo,  gets Warp 1.15   (port 5599)
         ^  JSON + raw float32 depth over a local socket (scripts/proto.py)
         v
-scripts/isaacsim_ur5e_demo.py imports Isaac Sim only, gets Warp 1.8.2
+scripts/isaacsim_client.py    imports Isaac Sim only, gets Warp 1.8.2
 ```
 
-`scripts/isaacsim_ur5e_demo.py` **must never import cuRobo.** If you add a
+`scripts/isaacsim_client.py` **must never import cuRobo.** If you add a
 cuRobo import there, everything dies in a confusing way.
 
 If NVIDIA ships an Isaac Sim built on Warp >= 1.13, this split can collapse back
@@ -85,7 +85,7 @@ Two terminals. The server must be listening before the sim starts.
 
 ```bash
 DISPLAY=:1 /home/eencku/anaconda3/envs/curobo_isaaclab/bin/python \
-  /media/eencku/2TBDATA/yusian-ubuntu/UR5_curobo/scripts/isaacsim_ur5e_demo.py --robot ur5_robotiq
+  /media/eencku/2TBDATA/yusian-ubuntu/UR5_curobo/scripts/isaacsim_client.py --robot ur5_robotiq
 ```
 
 Useful flags: `--scene NAME` (**both sides, must match**), `--no-mapping` (both
@@ -651,7 +651,7 @@ scripts/
     __init__.py             load(name) -> SceneSpec, available()
   rig.py                    what is NOT the scene: robots, SIM_DT, host/port
   planner_server.py         cuRobo 0.8: planning + mapping service
-  isaacsim_ur5e_demo.py     Isaac Sim client. Must not import cuRobo.
+  isaacsim_client.py        Isaac Sim client. Must not import cuRobo.
                             Builds the cameras; derives the ROS body pose of
                             each fixed one from its optical pose and checks it.
   proto.py                  length-prefixed framing (depth frames are 1.2 MB)
