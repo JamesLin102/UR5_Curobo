@@ -91,7 +91,8 @@ class _MoveJ(_MoveTo):
     """Plan to a joint configuration, then play it as MoveTo does."""
 
     def request(self):
-        return ("plan_joint", list(self.op.q))
+        start = self.cell.plan_end[self.env] if self.op.from_plan_end else None
+        return ("plan_joint", list(self.op.q), start)
 
     def after(self):
         if self.cell.cams and self.k % self.cell.cfg.map_every == 0:
@@ -358,7 +359,9 @@ class ProgramRunner:
             if not asks[kind]:
                 continue
             envs = [e for e, _ in asks[kind]]
-            q = np.stack([self.cell.q_now(e) for e in envs])
+            # A request may name where to plan from (MoveJ.from_plan_end).
+            q = np.stack([a[1] if kind == "plan_joint" and len(a) > 1 and a[1] is not None
+                          else self.cell.q_now(e) for e, a in asks[kind]])
             targets = np.asarray([a[0] for _, a in asks[kind]], dtype=np.float64)
             if kind == "plan":
                 got = pool.plan(envs, q, targets)

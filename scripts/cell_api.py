@@ -176,9 +176,17 @@ class Retrace:
 
 @dataclass
 class MoveJ:
-    """Plan to a joint configuration (planner order), e.g. back to HOME."""
+    """Plan to a joint configuration (planner order), e.g. back to HOME.
+
+    from_plan_end: plan from where the last planned move ENDED rather than
+    from the joints as measured. After a Retrace the two differ by the drive's
+    tracking error, a few mrad -- enough, beside an obstacle, to put a start
+    the planner itself chose inside its collision margin, so it refuses to
+    plan at all. The arm is within that error of the plan's first waypoint.
+    """
     q: Sequence[float]
     why: str = "no plan home"
+    from_plan_end: bool = False
     fail_idle: int = 0
     fatal: bool = True
     label: str = ""

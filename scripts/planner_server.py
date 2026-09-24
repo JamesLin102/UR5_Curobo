@@ -747,7 +747,9 @@ class PathCheck:
     only the static obstacles are checked.
     """
 
-    MARGIN = 0.005
+    # The spheres do not cover the arm's meshes exactly: straight moves passed
+    # at 5 mm touched a cylinder in the simulator at ~300 N.
+    MARGIN = 0.015
     SAMPLES = 35
 
     def __init__(self, kin, robot_key, scene):
