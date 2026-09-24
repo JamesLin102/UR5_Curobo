@@ -374,7 +374,16 @@ class LabCell:
         """Distance from each env-local point to the nearest surface the scene knows."""
         d = np.abs(pts[:, 2])                                   # the ground, z = 0
         boxes = [(dims, pose) for _, dims, pose, _ in self.spec.obstacles]
-        boxes += [(dims, pose) for _, dims, pose, _ in self.spec.unmapped]
+        for name, dims, pose, _ in self.spec.unmapped:
+            if self.spec.shape(name) == "cylinder":
+                R = quat_to_matrix(pose[3:])
+                local = (pts - np.asarray(pose[:3])) @ R
+                q = np.stack([np.linalg.norm(local[:, :2], axis=1) - dims[0] / 2.0,
+                              np.abs(local[:, 2]) - dims[2] / 2.0], axis=1)
+                outside = np.linalg.norm(np.maximum(q, 0.0), axis=1)
+                d = np.minimum(d, np.abs(outside + np.minimum(q.max(axis=1), 0.0)))
+            else:
+                boxes.append((dims, pose))
         for name, dims, *_ in self.spec.payload:
             p = self.payload[name].data.root_pose_w[env].cpu().numpy().astype(np.float64)
             boxes.append((dims, list(p[:3] - self.origins[env]) + list(p[3:])))

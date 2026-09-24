@@ -61,10 +61,11 @@ def static_scene(scene):
 
     scene.unmapped is deliberately absent -- those bodies exist only in the
     simulator, and the whole point is that they reach the planner through the
-    cameras or not at all.
+    cameras or not at all. scene.keep_out is the opposite: there only for the
+    planner, in no simulator and no camera.
     """
     return Scene(cuboid=[Cuboid(name=n, dims=d, pose=p)
-                         for n, d, p, _ in scene.obstacles])
+                         for n, d, p, _ in list(scene.obstacles) + list(scene.keep_out)])
 
 
 class Mapping:
@@ -407,6 +408,41 @@ class Mapping:
         planner.update_world(world)
 
 
+def narrowed_urdf(urdf_path, limits):
+    """A copy of the URDF with some joints' position limits narrowed, for the planner.
+
+    Written next to the original, so its relative mesh paths still resolve, under
+    a name that says what it holds; the simulator never sees it. cuRobo 0.8 reads
+    position limits only from the URDF (the robot yaml cannot override them).
+    Each limit is intersected with the URDF's own, never widened.
+    """
+    import hashlib
+    import xml.etree.ElementTree as ET
+
+    tree = ET.parse(urdf_path)
+    found = set()
+    for joint in tree.getroot().iter("joint"):
+        name = joint.get("name")
+        if name not in limits:
+            continue
+        lim = joint.find("limit")
+        lo, hi = limits[name]
+        lim.set("lower", repr(max(float(lim.get("lower")), float(lo))))
+        lim.set("upper", repr(min(float(lim.get("upper")), float(hi))))
+        found.add(name)
+    missing = set(limits) - found
+    if missing:
+        raise SystemExit(f"planner_joint_limits names joints the URDF does not have: {sorted(missing)}")
+    text = ET.tostring(tree.getroot(), encoding="unicode")
+    tag = hashlib.sha1(text.encode()).hexdigest()[:10]
+    out = os.path.join(os.path.dirname(urdf_path), f".planner_limits_{tag}.urdf")
+    if not os.path.exists(out):
+        with open(out + ".tmp", "w") as f:
+            f.write(text)
+        os.replace(out + ".tmp", out)
+    return out
+
+
 def build(robot_key, scene, use_cuda_graph=True):
     spec = ROBOTS[robot_key]
     content = ContentPath(
@@ -423,6 +459,16 @@ def build(robot_key, scene, use_cuda_graph=True):
     kin = Kinematics(KinematicsCfg.from_content_path(content))
     planner_dict = copy.deepcopy(robot_dict)
     planner_dict["robot_cfg"]["kinematics"]["tool_frames"] = [spec["tool_frame"]]
+    # The scene may keep the planner off an IK branch (grasp: elbow down, which
+    # is collision-free at the pre-grasp and drives the forearm into the table
+    # on the way down). `kin` keeps the full URDF: it only does forward
+    # kinematics, for the cameras.
+    if scene.planner_joint_limits:
+        planner_dict["robot_cfg"]["kinematics"]["urdf_path"] = narrowed_urdf(
+            f"{ROOT}/{spec['urdf']}", scene.planner_joint_limits)
+        print("[planner] joint limits narrowed for planning: " + ", ".join(
+            f"{j} [{lo:+.2f}, {hi:+.2f}]" for j, (lo, hi) in scene.planner_joint_limits.items()),
+            flush=True)
     # The base's spheres are for the SEGMENTER, not the planner. `kin` above
     # keeps them so the cameras can mask the robot's own base out of the
     # depth; the planner must not check them, because the base is bolted to
@@ -510,6 +556,15 @@ def unmapped_clearance(planner, scene, traj_q):
     c, r = sph[:, :3], sph[:, 3]
     out = []
     for name, dims, pose, _ in scene.unmapped:
+        if scene.shape(name) == "cylinder":
+            # Axis along world z: every cylinder a scene has so far stands up.
+            axis_xy = torch.tensor(pose[:2], device=c.device, dtype=c.dtype)
+            radial = (c[:, :2] - axis_xy).norm(dim=1) - dims[0] / 2
+            axial = (c[:, 2] - pose[2]).abs() - dims[2] / 2
+            q = torch.stack([radial, axial], dim=1)
+            d = q.clamp(min=0).norm(dim=1) + q.max(dim=1).values.clamp(max=0) - r
+            out.append(f"{name} {float(d.min()) * 1000:+.0f} mm")
+            continue
         lo = torch.tensor([p - d / 2 for p, d in zip(pose[:3], dims)],
                           device=c.device, dtype=c.dtype)
         hi = torch.tensor([p + d / 2 for p, d in zip(pose[:3], dims)],

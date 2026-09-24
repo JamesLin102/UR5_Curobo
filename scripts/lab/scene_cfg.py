@@ -79,7 +79,11 @@ def _spawn_unmapped(spec):
     """Bodies only the simulator knows: rendered into depth, never collided with."""
     out = {}
     for name, dims, pose, rgb in spec.unmapped:
-        cfg = sim_utils.CuboidCfg(size=tuple(dims), visual_material=_colour(rgb))
+        if spec.shape(name) == "cylinder":
+            cfg = sim_utils.CylinderCfg(radius=float(dims[0]) / 2, height=float(dims[2]),
+                                        axis="Z", visual_material=_colour(rgb))
+        else:
+            cfg = sim_utils.CuboidCfg(size=tuple(dims), visual_material=_colour(rgb))
         cfg.func(f"{ENV_NS}/{name}", cfg,
                  translation=tuple(pose[:3]), orientation=tuple(pose[3:]))
         out[name] = f"{ENV_NS}/{name}"
@@ -124,7 +128,7 @@ def _camera_cfg(cell, cam, prim_path, pos, rot):
         prim_path=prim_path,
         width=int(cam["width"]),
         height=int(cam["height"]),
-        data_types=["distance_to_image_plane"],
+        data_types=["distance_to_image_plane"] + (["rgb"] if cam.get("rgb") else []),
         update_period=0.0,
         spawn=sim_utils.PinholeCameraCfg(
             focal_length=focal, horizontal_aperture=APERTURE,

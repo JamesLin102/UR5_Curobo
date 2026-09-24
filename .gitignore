@@ -5,3 +5,6 @@ __pycache__/
 # replaced while something still has it open (e.g. editing scene_def.py while
 # the sim is running). They are not project files.
 .fuse_hidden*
+
+# planner_server.py writes these: the URDF with scene-narrowed joint limits.
+.planner_limits_*.urdf

@@ -201,6 +201,11 @@ def build_stage(world, scene, robot_key, urdf):
     #
     # These deliberately keep their default render purpose, unlike the target
     # markers above: being seen is the entire point of them.
+    # Frozen backend: cuboids only. A shaped body would silently become a box.
+    shaped = sorted(n for n, *_ in scene.unmapped if scene.shape(n) != "cuboid")
+    if shaped:
+        raise SystemExit(f"the Isaac Sim backend builds cuboids only, and this scene "
+                         f"shapes {shaped}; use the Isaac Lab backend")
     bodies = {}
     for name, dims, pose, colour in scene.unmapped:
         bodies[name] = VisualCuboid(

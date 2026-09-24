@@ -19,6 +19,12 @@ from typing import Dict, List, Optional, Sequence, Tuple
 # name, dims (full extents, m), pose [x, y, z, qw, qx, qy, qz], rgb 0..1
 Body = Tuple[str, List[float], List[float], Tuple[float, float, float]]
 
+# What a Body's dims mean, by shape (SceneSpec.shapes; a body not named there
+# is a cuboid):
+#   "cuboid"    full extents along its own x, y, z
+#   "cylinder"  [2r, 2r, height], its axis along its own z
+SHAPES = ("cuboid", "cylinder")
+
 # A Body plus a mass in kg. Unlike the other two kinds of object in a scene,
 # this one is a real rigid body: it falls, it can be squeezed, and it comes
 # away when the gripper closes on it.
@@ -67,6 +73,8 @@ class SceneSpec:
                               the pose by forward kinematics.
                       "pose"  fixed in world, [x,y,z,qw,qx,qy,qz], OPTICAL
                               frame (+Z along the view, +X right, +Y down).
+                    Optional "rgb": True renders colour as well as depth
+                    (Isaac Lab backend), for perception that needs it.
         mapper      TSDF/ESDF settings; see pick_place/scene.py for what each one
                     does and what it costs to get wrong. Optional key
                     "floor_z": nothing at or below that height is fused, so a
@@ -89,6 +97,20 @@ class SceneSpec:
                     open-loop, because a thing you intend to grasp is exactly
                     a thing the map calls an obstacle. Keep them short.
         watch       volumes to report voxel counts for (see WatchBox).
+        shapes      {unmapped body name: "cylinder"}; a body not named here is a
+                    cuboid, so a scene with only boxes leaves this out. A
+                    cylinder's dims are [2r, 2r, height], axis along its z.
+        keep_out    bodies the PLANNER is told about and nothing else: never
+                    spawned in the simulator, never seen by a camera. Volumes
+                    the arm must not be planned into although nothing is
+                    there -- a floor guard over the table, say. The straight
+                    moves of a grasp are IK, not planned, so they may go in.
+        planner_joint_limits
+                    {joint name: (lower, upper)} in rad, narrowing the URDF's
+                    limits for the PLANNER only (plans and the IK of the
+                    vertical moves); the simulator keeps the URDF's. For a scene
+                    where one IK branch is safe to plan to and not to descend
+                    from -- see grasp/scene.py.
     """
 
     obstacles: List[Body]
@@ -101,6 +123,9 @@ class SceneSpec:
     payload: List[Payload] = field(default_factory=list)
     pick: dict = field(default_factory=dict)
     watch: List[WatchBox] = field(default_factory=list)
+    shapes: Dict[str, str] = field(default_factory=dict)
+    planner_joint_limits: Dict[str, Tuple[float, float]] = field(default_factory=dict)
+    keep_out: List[Body] = field(default_factory=list)
 
     def __post_init__(self):
         for name, cam in self.cameras.items():
@@ -123,6 +148,24 @@ class SceneSpec:
         for name, dims, pose, _, mass in self.payload:
             if mass <= 0:
                 raise ValueError(f"payload {name!r} needs a positive mass, got {mass}")
+        unmapped = {b[0]: b[1] for b in self.unmapped}
+        for name, shape in self.shapes.items():
+            if shape not in SHAPES:
+                raise ValueError(f"shape of {name!r} is {shape!r}; one of {SHAPES}")
+            if name not in unmapped:
+                raise ValueError(f"shapes names {name!r}, which is not an unmapped body "
+                                 f"(only those can be shaped, for now)")
+            if shape == "cylinder" and abs(unmapped[name][0] - unmapped[name][1]) > 1e-9:
+                raise ValueError(f"cylinder {name!r} has dims {unmapped[name]}; "
+                                 f"want [2r, 2r, height]")
+
+        for joint, (lo, hi) in self.planner_joint_limits.items():
+            if not lo < hi:
+                raise ValueError(f"planner_joint_limits[{joint!r}] = ({lo}, {hi}) is empty")
+
+    def shape(self, name: str) -> str:
+        """A body's shape: "cylinder" if `shapes` says so, else "cuboid"."""
+        return self.shapes.get(name, "cuboid")
 
     def body(self, name: str) -> Optional[Body]:
         """Look up an obstacle, unmapped body or payload by name."""

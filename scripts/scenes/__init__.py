@@ -13,11 +13,11 @@ import importlib
 import os
 from typing import Dict, List
 
-from .base import Body, SceneSpec, WatchBox
+from .base import SHAPES, Body, SceneSpec, WatchBox
 
 # Re-exported so a scene module, and anything reading one, can import the whole
 # contract from `scenes` without reaching into `scenes.base`.
-__all__ = ["Body", "SceneSpec", "WatchBox", "DEFAULT", "available", "load", "register"]
+__all__ = ["SHAPES", "Body", "SceneSpec", "WatchBox", "DEFAULT", "available", "load", "register"]
 
 DEFAULT = "pick_place"
 
