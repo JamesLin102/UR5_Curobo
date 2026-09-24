@@ -245,7 +245,8 @@ class _Scan(_Run):
     """Sweep the scene's scan poses, fusing as it goes, so the map starts with content."""
 
     def start(self, reply):
-        self.poses = [np.asarray(p, dtype=np.float64) for p in self.cell.spec.scan_poses]
+        poses = self.op.poses if self.op.poses is not None else self.cell.spec.scan_poses
+        self.poses = [np.asarray(p, dtype=np.float64) for p in poses]
         self.p, self.s, self.fused = 0, 0, 0
         self.cell.log("scanning the cell before planning...", self.env)
         if not self.poses:

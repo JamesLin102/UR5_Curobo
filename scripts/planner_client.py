@@ -104,7 +104,7 @@ class Planner:
         joints, _ = self.ik_checked(q, target)
         return joints
 
-    def ik_checked(self, q, target, world=None, check=False):
+    def ik_checked(self, q, target, world=None, check=False, exclude=None):
         """(joint angles or None, the server's reason when None).
 
         check: also collision-check the joint blend from q to the answer (the
@@ -112,9 +112,11 @@ class Planner:
         static obstacles; a move that fails comes back as None. "escape":
         judged by where it starts -- no closer than that, never touching --
         for getting away from something the arm is already near.
+        exclude: ((x, y, z), (x, y, z)) corners of a box the check ignores on
+        a server that maps -- the thing being gripped, which the map holds.
         """
         send_msg(self.sock, {"op": "ik", "q": list(map(float, q)), "target": target,
-                             "world": world,
+                             "world": world, "exclude": exclude,
                              "check": check if check == "escape" else bool(check)})
         header, payload = recv_msg(self.sock)
         if not header.get("ok"):

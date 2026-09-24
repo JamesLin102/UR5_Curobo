@@ -210,6 +210,9 @@ class Idle:
 @dataclass
 class Scan:
     label: str = ""
+    # Which joint poses to sweep; None: the scene's scan_poses. One at a time
+    # is how a caller stops at each view to take its images.
+    poses: Optional[List[Sequence[float]]] = None
 
 
 Op = Any  # one of the dataclasses above

@@ -400,6 +400,26 @@ class LabCell:
                        holding=self.closed[env_ids] & near,
                        sim_time=self.steps * SIM_DT, depth=depth)
 
+    def camera_view(self, name, env_ids):
+        """What perception gets from a camera, per env: dict(depth, rgb, K, pose).
+
+        depth (H, W) m, 0 where there is none; rgb (H, W, 3) uint8 or None when
+        the camera has no colour; K (3, 3); pose the 4x4 env-local OPTICAL pose
+        by forward kinematics (camera_pose) -- what the real arm would compute
+        from its joint encoders and hand-eye calibration.
+        """
+        cam = self.cams[name]
+        ids = self._ids(env_ids)
+        depth = np.nan_to_num(cam.data.output["distance_to_image_plane"][ids, :, :, 0]
+                              .cpu().numpy().astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+        rgb = cam.data.output.get("rgb")
+        rgb = rgb[ids, :, :, :3].cpu().numpy().astype(np.uint8) if rgb is not None else None
+        out = []
+        for k, e in enumerate(env_ids):
+            out.append(dict(depth=depth[k], rgb=None if rgb is None else rgb[k],
+                            K=self.intrinsics[name][e].copy(), pose=self.camera_pose(name, e)))
+        return out
+
     def camera_pose(self, name, env=0):
         """4x4 env-local OPTICAL pose of a camera, as the mapper will be told it.
 

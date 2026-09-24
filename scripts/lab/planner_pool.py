@@ -56,6 +56,10 @@ class PlannerPool:
         (training mode; refused when mapping)."""
         raise NotImplementedError
 
+    def set_exclude(self, env_ids, boxes) -> None:
+        """boxes[k]: ((lo), (hi)) the straight-move check leaves out of env_ids[k]'s map."""
+        pass
+
     def map_frame(self, env: int, q, depth, K, camera: str) -> None:
         raise NotImplementedError
 
@@ -81,6 +85,7 @@ class ServerPool(PlannerPool):
 
     def __init__(self, cell, num_envs, log=print):
         self.worlds = set()          # envs whose world was set: their requests name it
+        self.exclude = {}            # env -> box the map check leaves out
         k = cell.num_servers or num_envs
         if cell.mapping and k != num_envs:
             raise ValueError(
@@ -138,7 +143,11 @@ class ServerPool(PlannerPool):
         check = check if check is not None else [False] * len(env_ids)
         return self._each(env_ids, lambda c, k: c.ik_checked(
             q[k], [float(v) for v in targets[k]], world=self._world(env_ids[k]),
-            check=check[k]))
+            check=check[k], exclude=self.exclude.get(int(env_ids[k]))))
+
+    def set_exclude(self, env_ids, boxes):
+        for e, b in zip(env_ids, boxes):
+            self.exclude[int(e)] = None if b is None else [list(map(float, b[0])), list(map(float, b[1]))]
 
     def set_world(self, env_ids, bodies):
         self._each(env_ids, lambda c, k: c.set_world(int(env_ids[k]), bodies[k]))

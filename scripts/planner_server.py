@@ -183,6 +183,7 @@ class Mapping:
 
         self.frames = 0
         self.voxel_grid = None
+        self.voxel_centers = None
         self.last_esdf_ms = 0.0
         self.occupied = 0
         self.self_hits = 0
@@ -344,6 +345,7 @@ class Mapping:
         """
         self.mapper.reset()
         self.voxel_grid = None
+        self.voxel_centers = None
         self.occupied = 0
         self.self_hits = 0
         self.watch_report = ""
@@ -370,6 +372,8 @@ class Mapping:
         voxels = self.mapper.extract_occupied_voxels()
         self.occupied = 0 if voxels.centers is None else len(voxels.centers)
         self.self_hits = self._count_self_hits(voxels)
+        # Kept for checking straight moves against the map (PathCheck).
+        self.voxel_centers = None if not self.occupied else voxels.centers.float()
 
         # Per watched volume: how many occupied voxels are inside it, and how
         # high they reach. The z extent is the number that separates "the
@@ -643,7 +647,7 @@ def trajectory_reply(res, planner, kin, out, bodies):
     return out, traj[:n].contiguous().cpu().numpy().astype(np.float32).tobytes()
 
 
-def handle_ik(approach_ik, kin, tool_frame, header, path_check=None, bodies=()):
+def handle_ik(approach_ik, kin, tool_frame, header, path_check=None, bodies=(), mapping=None):
     """Joint angles for one tool pose, seeded from the current state.
 
     Used for the last few centimetres of a grasp, where plan_pose is no help:
@@ -667,7 +671,10 @@ def handle_ik(approach_ik, kin, tool_frame, header, path_check=None, bodies=()):
         return {"ok": False, "status": "ik failed"}, b""
     sol = res.solution[res.success].view(-1, len(kin.joint_names))[0]
     if header.get("check") and path_check is not None:
-        ok, why = path_check(q[0], sol, bodies, escape=header.get("check") == "escape")
+        vox = None if mapping is None else getattr(mapping, "voxel_centers", None)
+        ok, why = path_check(q[0], sol, bodies, escape=header.get("check") == "escape",
+                             voxels=vox, voxel_size=path_check.scene.mapper["voxel_size"] if mapping else 0.0,
+                             exclude=header.get("exclude"))
         if not ok:
             return {"ok": False, "status": why}, b""
     return ({"ok": True, "joint_names": list(kin.joint_names)},
@@ -743,8 +750,10 @@ class PathCheck:
     every body the environment was given (exact shapes) and, all but the
     fingers', of the static obstacles -- the fingers are meant to come down to
     the table. The planner-only keep_out volumes are not checked: a grip goes
-    down through them by design. Nor, yet, is the MAP: on a server that maps
-    only the static obstacles are checked.
+    down through them by design. On a server that maps, the MAP is checked
+    instead of given bodies: every occupied voxel, less the box the request
+    names as `exclude` -- the estimated cube, which the fingers are meant to
+    reach and which the map holds like anything else.
     """
 
     # The spheres do not cover the arm's meshes exactly: straight moves passed
@@ -802,7 +811,29 @@ class PathCheck:
             return self.MARGIN
         return max(min(self.MARGIN, float(d[0].min()) - self.SLACK), self.TOUCH)
 
-    def __call__(self, q0, q1, bodies, escape=False):
+    def _voxels(self, c, r, live, voxels, voxel_size, exclude):
+        """Nearest distance, per sphere, to the map's occupied voxel CENTRES.
+
+        Centres, not voxel surfaces: an occupied voxel's centre is within half
+        a voxel (7.5 mm) of the surface it records, either side, and MARGIN
+        (15 mm) already covers that. Taking half a voxel off as well counted
+        the same error twice: the oracle, whose grips have 15 mm to the real
+        cylinders, had 5 of 16 descents refused at +1..+15 mm "from the map".
+        """
+        v = voxels
+        if exclude is not None:
+            lo = torch.as_tensor(exclude[0], device=v.device, dtype=v.dtype)
+            hi = torch.as_tensor(exclude[1], device=v.device, dtype=v.dtype)
+            v = v[~((v >= lo) & (v <= hi)).all(dim=1)]
+        if not len(v):
+            return None
+        flat = c[live]
+        d = torch.cdist(flat, v).min(dim=1).values - r[live]
+        out = torch.full_like(r, 1e9)
+        out[live] = d
+        return out
+
+    def __call__(self, q0, q1, bodies, escape=False, voxels=None, voxel_size=0.0, exclude=None):
         t = torch.linspace(0.0, 1.0, self.SAMPLES, device=q0.device).unsqueeze(1)
         qs = (1 - t) * q0.unsqueeze(0) + t * q1.unsqueeze(0)
         js = JointState.from_position(qs, joint_names=self.kin.joint_names)
@@ -816,6 +847,12 @@ class PathCheck:
             worst = float(d.min())
             if worst < self._limit(d, escape):
                 return False, f"straight move would pass {1000 * worst:+.0f} mm from {name}"
+        if voxels is not None:
+            d = self._voxels(c, r, live, voxels, voxel_size, exclude)
+            if d is not None:
+                worst = float(d.min())
+                if worst < self._limit(d, escape):
+                    return False, f"straight move would pass {1000 * worst:+.0f} mm from the map"
         arm = live.clone()
         arm[:, self.fingers] = False
         for name, dims, pose, _ in self.scene.obstacles:
@@ -995,7 +1032,7 @@ def serve(conn, args, scene, planner, kin, tool_frame, approach_ik, mapping,
 
             elif op == "ik":
                 out, blob = handle_ik(approach_ik, kin, tool_frame, header,
-                                      path_check, bodies if key is not None else [])
+                                      path_check, bodies if key is not None else [], mapping)
                 if not out["ok"]:
                     print(f"[planner] ik FAILED for {header.get('target')}: "
                           f"{out.get('status')}", flush=True)

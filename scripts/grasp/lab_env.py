@@ -18,8 +18,11 @@ again, all inside the same step, so the next observation is from HOME.
 Training mode (the default: cell.mapping False) tells each environment's
 planner where that environment's cylinders are, and the policy sees a
 synthesised perception estimate (grasp.task.synth_estimate). Evaluation mode
-(mapping on) will map them instead and see perception.py's estimate -- not
-built yet; see the plan.
+(cfg.cell.mapping = True, one mapping planner server per env) tells the
+planner nothing: at reset the wrist camera scans -- the map is built from
+it, and at each view the images go to grasp.perception, whose estimate is
+what the policy sees -- and the straight moves are checked against the map,
+less a box round the estimated cube.
 
 Layouts come from the bank (grasp.task.Bank). reset(options=...) takes
 "layouts": [bank row per env] to choose them.
@@ -33,10 +36,11 @@ import torch
 
 from isaaclab.utils import configclass
 
-from cell_api import Grip, Idle, MoveJ, MoveTo, MoveZ, ResetOptions, Retrace
+from cell_api import Grip, Idle, MoveJ, MoveTo, MoveZ, ResetOptions, Retrace, Scan
 from lab.tasks.base import CellEnv, CellEnvCfg
 from legs import leg_ops, tool_pose
 
+from . import perception as P
 from . import scene as G
 from . import task as T
 
@@ -59,7 +63,7 @@ class GraspEnvCfg(CellEnvCfg):
 
     def __post_init__(self):
         self.cell.scene = "grasp"
-        self.cell.mapping = False          # training mode; evaluation turns it on
+        self.cell.mapping = False          # training mode; set True for evaluation
         self.cell.markers = "off"          # overlays show up in colour images
         self.cell.verbose = False
 
@@ -86,6 +90,7 @@ class GraspEnv(CellEnv):
         self._trunc = torch.zeros(n, dtype=torch.bool, device=self.device)
         self.stuck = 0                 # returns home that had to be teleports
         self.home_tool = None          # the tool pose at HOME, from the first reset
+        self.unseen = 0                # evaluation: resets where perception found no cube
         self.stuck_why = []
 
     @property
@@ -109,26 +114,51 @@ class GraspEnv(CellEnv):
                 payload_poses={self.cube_name: [cube[0], cube[1], G.TABLE_TOP + G.CUBE_SIZE / 2]
                                + T.cube_quat(cube[2])},
                 body_poses=T.body_poses(cyl),
-                clear_map=True, scan=bool(self.cell.cams)))
+                clear_map=True, scan=False))
             bodies.append(T.bodies_for_planner(cyl))
         if self.training_mode:
             self.pool.set_world(env_ids, bodies)
         o = self.cell.reset(env_ids, opts)
         if self.home_tool is None:
             self.home_tool = [float(v) for v in o.tool_pose[0]]     # the arm is at HOME
-        for k, e in enumerate(env_ids):
-            self.est[e] = self._perceive(e, o.objects[self.cube_name][k])
+        if self.training_mode:
+            for k, e in enumerate(env_ids):
+                self.est[e] = self._perceive(e, o.objects[self.cube_name][k])
+        else:
+            self._scan_and_perceive(env_ids, list(G.SCAN_POSES[:-1]))
         self.attempt[env_ids] = 0
         self.last_action[env_ids] = 0.0
         self.last_outcome[env_ids] = 0
         self.extras["reset"] = {"env_ids": env_ids, "layouts": rows.tolist()}
 
     def _perceive(self, e, cube_pose):
-        """What perception reports now. Training: the error model on the truth."""
-        truth = self._cube_xyyaw(cube_pose)
-        if not self.training_mode:
-            raise NotImplementedError("evaluation mode needs grasp/perception.py (plan §4)")
-        return T.synth_estimate(self.rng, truth, self.cylinders[e], self.task)
+        """Training: what perception would report, the error model on the truth."""
+        return T.synth_estimate(self.rng, self._cube_xyyaw(cube_pose), self.cylinders[e], self.task)
+
+    def _scan_and_perceive(self, env_ids, poses):
+        """Evaluation: stop at each view (mapping on the way), look, and estimate.
+
+        The arm is at HOME before and after: the last pose is HOME's own view.
+        """
+        views = {e: [] for e in env_ids}
+        for q in list(poses) + [list(G.HOME)]:
+            self.cell.run(env_ids, [[Scan(poses=[q]), Idle(10)] for _ in env_ids])
+            for e, v in zip(env_ids, self.cell.camera_view("wrist", env_ids)):
+                views[e].append(v)
+        boxes = []
+        for e in env_ids:
+            est = P.perceive(views[e])
+            if est is None:
+                # Not seen: the policy is told so (visibility 0) and aims at
+                # the middle of the workspace -- the attempt will fail, honestly.
+                self.unseen += 1
+                est = T.Estimate(cube=np.array([np.mean(G.CUBE_XY[0]), np.mean(G.CUBE_XY[1]), 0.0]),
+                                 visibility=0.0, residual=G.CUBE_SIZE, cylinders=np.zeros((G.MAX_CYLINDERS, 3)))
+            self.est[e] = est
+            x, y = est.cube[:2]
+            h = G.CUBE_SIZE / 2 + 0.02
+            boxes.append(((x - h, y - h, G.TABLE_TOP - 0.01), (x + h, y + h, G.TABLE_TOP + G.CUBE_SIZE + 0.02)))
+        self.pool.set_exclude(env_ids, boxes)
 
     @staticmethod
     def _cube_xyyaw(pose):
@@ -186,9 +216,12 @@ class GraspEnv(CellEnv):
         going_on = [e for e in ids if not term[e] and not trunc[e]]
         if going_on:
             self._return_home(going_on, o)
-            o2 = self.cell.observe(going_on)
-            for k, e in enumerate(going_on):
-                self.est[e] = self._perceive(e, o2.objects[self.cube_name][k])
+            if self.training_mode:
+                o2 = self.cell.observe(going_on)
+                for k, e in enumerate(going_on):
+                    self.est[e] = self._perceive(e, o2.objects[self.cube_name][k])
+            else:
+                self._scan_and_perceive(going_on, [])      # HOME's view again
         self.attempt += 1
         self._rew = self.to_torch(rew)
         self._term = self.to_torch(term, torch.bool)
@@ -205,6 +238,8 @@ class GraspEnv(CellEnv):
             log["episode/success"] = float(np.mean([info[e]["success"] for e in np.nonzero(done)[0]]))
             log["episode/attempts"] = float(np.mean(self.attempt[done]))
         log["stuck_total"] = float(self.stuck)
+        if not self.training_mode:
+            log["cube_unseen_total"] = float(self.unseen)
         self.extras["log"] = log
 
     def _return_home(self, env_ids, o):
