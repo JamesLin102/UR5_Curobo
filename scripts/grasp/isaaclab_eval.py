@@ -3,6 +3,7 @@
     python scripts/grasp/isaaclab_eval.py --policy logs/rsl_rl/grasp/<run>/model_500.pt
     python scripts/grasp/isaaclab_eval.py --policy oracle --mode eval --num_envs 4
     python scripts/grasp/isaaclab_eval.py --policy random --episodes 200
+    python scripts/grasp/isaaclab_eval.py --policy <model_N.pt> --mode train --num_envs 1 --gui --port 5699
 
 --mode train: as training runs -- the planner told each environment's
     cylinders, the policy shown the truth through the error model. Fast.
@@ -43,9 +44,12 @@ ap.add_argument("--bank", default="eval")
 ap.add_argument("--seed", type=int, default=0)
 ap.add_argument("--no-servers", action="store_true")
 ap.add_argument("--rl-device", default="cuda:0")
+ap.add_argument("--port", type=int, default=None,
+                help="first planner server port (default rig.PORT); another one while training runs")
+ap.add_argument("--gui", action="store_true", help="open the Isaac Sim window to watch (a few envs)")
 AppLauncher.add_app_launcher_args(ap)
 ARGS = ap.parse_args()
-ARGS.headless = True
+ARGS.headless = not ARGS.gui
 MAPPING = ARGS.mode == "eval"
 if MAPPING:
     ARGS.enable_cameras = True
@@ -60,7 +64,8 @@ def log(msg):
 def start_servers(k):
     logfile = os.path.join(tempfile.gettempdir(), f"grasp_eval_servers_{os.getpid()}.log")
     cmd = [sys.executable, "-u", os.path.join(SCRIPTS, "planner_servers.py"), "--num", str(k),
-           "--scene", "grasp"] + ([] if MAPPING else ["--no-mapping"])
+           "--scene", "grasp"] + ([] if MAPPING else ["--no-mapping"]) \
+        + ([] if ARGS.port is None else ["--port", str(ARGS.port)])
     proc = subprocess.Popen(cmd, stdout=open(logfile, "w"), stderr=subprocess.STDOUT, cwd=ROOT,
                             start_new_session=True)
     deadline = time.time() + 900
@@ -126,6 +131,8 @@ def main():
     tid = task_id("Grasp", "ur5_robotiq")
     cfg = parse_env_cfg(tid, device=ARGS.device, num_envs=ARGS.num_envs)
     cfg.cell.mapping = MAPPING
+    if ARGS.port is not None:
+        cfg.cell.port = ARGS.port
     cfg.task.bank = ARGS.bank
     cfg.seed = ARGS.seed
     env = gym.make(tid, cfg=cfg)
