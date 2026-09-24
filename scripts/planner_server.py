@@ -43,11 +43,12 @@ from rig import (  # noqa: E402
 
 from curobo.types import CameraObservation, ContentPath, GoalToolPose, JointState, Pose  # noqa: E402
 from curobo.kinematics import Kinematics, KinematicsCfg  # noqa: E402
-from curobo.scene import Cuboid, Scene  # noqa: E402
+from curobo.scene import Cuboid, Cylinder, Scene  # noqa: E402
 from curobo.perception import FilterDepth, Mapper, MapperCfg, RobotSegmenter  # noqa: E402
 from curobo.motion_planner import MotionPlanner, MotionPlannerCfg  # noqa: E402
 from curobo.inverse_kinematics import InverseKinematics  # noqa: E402
 from curobo._src.robot.loader.util import load_robot_yaml  # noqa: E402
+from urdf_frames import quat_to_matrix as quat_to_matrix_np  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -539,24 +540,31 @@ def build(robot_key, scene, use_cuda_graph=True):
     return kin, planner, approach_ik, robot_dict, spec["tool_frame"]
 
 
-def unmapped_clearance(planner, scene, traj_q):
-    """Closest the planned trajectory comes to a body the planner is NOT told about.
+def scene_bodies(scene):
+    """The scene's unmapped bodies as (name, shape, dims, pose), where they stand in the spec."""
+    return [(n, scene.shape(n), d, p) for n, d, p, _ in scene.unmapped]
+
+
+def unmapped_clearance(planner, bodies, traj_q):
+    """Closest the planned trajectory comes to the unmapped bodies, as (name, shape, dims, pose).
 
     REPORTING ONLY -- nothing here reaches the planner, which is the whole
     point of the demo. It exists because the waypoint count is a bad proxy for
-    "did it avoid": a detour can come back the same length, and did.
+    "did it avoid": a detour can come back the same length, and did. The
+    bodies are the scene's, or an environment's own when its client said where
+    they stand this episode (op "world").
 
     Negative means the arm would pass through it.
     """
-    if not scene.unmapped:
+    if not bodies:
         return ""
     js = JointState.from_position(traj_q, joint_names=planner.kinematics.joint_names)
     sph = planner.kinematics.compute_kinematics(js).robot_spheres.reshape(-1, 4)
     sph = sph[sph[:, 3] > 0]
     c, r = sph[:, :3], sph[:, 3]
     out = []
-    for name, dims, pose, _ in scene.unmapped:
-        if scene.shape(name) == "cylinder":
+    for name, shape, dims, pose in bodies:
+        if shape == "cylinder":
             # Axis along world z: every cylinder a scene has so far stands up.
             axis_xy = torch.tensor(pose[:2], device=c.device, dtype=c.dtype)
             radial = (c[:, :2] - axis_xy).norm(dim=1) - dims[0] / 2
@@ -575,7 +583,7 @@ def unmapped_clearance(planner, scene, traj_q):
     return ", ".join(out)
 
 
-def handle_plan(planner, kin, tool_frame, header, approach_ik=None):
+def handle_plan(planner, kin, tool_frame, header, approach_ik=None, bodies=()):
     q = torch.tensor([header["q"]], device="cuda", dtype=torch.float32)
     start = JointState.from_position(q, joint_names=kin.joint_names)
     goal = GoalToolPose.from_poses({tool_frame: Pose.from_list(header["target"])})
@@ -606,6 +614,11 @@ def handle_plan(planner, kin, tool_frame, header, approach_ik=None):
             out["goal_q"] = (ik.solution[ik.success].view(-1, len(kin.joint_names))[0]
                              .cpu().numpy().astype(float).tolist())
         return out, b""
+    return trajectory_reply(res, planner, kin, out, bodies)
+
+
+def trajectory_reply(res, planner, kin, out, bodies):
+    """A successful plan as (header, float32 bytes): the waypoints, cspace order."""
     # The trajectory is WIDER than the cspace: cuRobo appends the joints it
     # was told to lock, so a 6-DOF plan on a robot with a locked gripper comes
     # back 7 columns wide, with the gripper last. Select by the trajectory's
@@ -624,13 +637,13 @@ def handle_plan(planner, kin, tool_frame, header, approach_ik=None):
         else traj.shape[0]
     n = max(2, min(n, traj.shape[0]))
     out["solve_ms"] = float(res.solve_time * 1e3)
-    out["clearance"] = unmapped_clearance(planner, SCENE_FOR_REPORT, traj[:n])
+    out["clearance"] = unmapped_clearance(planner, bodies, traj[:n])
     out["n"] = n
     out["dof"] = traj.shape[1]
     return out, traj[:n].contiguous().cpu().numpy().astype(np.float32).tobytes()
 
 
-def handle_ik(approach_ik, kin, tool_frame, header):
+def handle_ik(approach_ik, kin, tool_frame, header, path_check=None, bodies=()):
     """Joint angles for one tool pose, seeded from the current state.
 
     Used for the last few centimetres of a grasp, where plan_pose is no help:
@@ -653,8 +666,146 @@ def handle_ik(approach_ik, kin, tool_frame, header):
     if not ok:
         return {"ok": False, "status": "ik failed"}, b""
     sol = res.solution[res.success].view(-1, len(kin.joint_names))[0]
+    if header.get("check") and path_check is not None:
+        ok, why = path_check(q[0], sol, bodies)
+        if not ok:
+            return {"ok": False, "status": why}, b""
     return ({"ok": True, "joint_names": list(kin.joint_names)},
             sol.contiguous().cpu().numpy().astype(np.float32).tobytes())
+
+
+def handle_plan_joint(planner, kin, header, bodies=()):
+    """Plan to a joint configuration (header "goal", cspace order), e.g. back to HOME."""
+    q = torch.tensor([header["q"]], device="cuda", dtype=torch.float32)
+    g = torch.tensor([header["goal"]], device="cuda", dtype=torch.float32)
+    start = JointState.from_position(q, joint_names=kin.joint_names)
+    goal = JointState.from_position(g, joint_names=kin.joint_names)
+    res = planner.plan_cspace(goal, start)
+    ok = res is not None and bool(res.success[0])
+    out = {"ok": ok, "joint_names": list(kin.joint_names)}
+    if not ok:
+        out["status"] = str(getattr(res, "status", "unknown"))
+        return out, b""
+    return trajectory_reply(res, planner, kin, out, bodies)
+
+
+class Worlds:
+    """Where each environment's bodies stand this episode, for the planner (op "world").
+
+    Training mode: the planner is TOLD the cylinders instead of mapping them
+    (docs/grasp_rl_plan.md §7). One server can hold many environments' worlds;
+    a request names its environment ("world": key) and the planner's world is
+    swapped to that one first, if it is not the one loaded. A cylinder reaches
+    the planner as cuRobo's own stand-in for one, its bounding box
+    (Cylinder.get_cuboid); the exact shape is kept for the reports and for the
+    straight-move check.
+
+    Refused on a server that maps: there the bodies must be found by the
+    cameras, and a world handed over would be the answer to the test.
+    """
+
+    def __init__(self, scene, planner):
+        self.scene, self.planner = scene, planner
+        self.bodies = {}            # key -> [(name, shape, dims, pose)]
+        self.current = None
+        self.swaps = 0
+
+    def set(self, key, bodies):
+        self.bodies[key] = [(str(n), str(sh), [float(v) for v in d], [float(v) for v in p])
+                            for n, sh, d, p in bodies]
+        if self.current == key:
+            self.current = None     # reload it on the next request
+
+    def use(self, key):
+        if key is None or key == self.current:
+            return
+        world = static_scene(self.scene)
+        for name, shape, dims, pose in self.bodies.get(key, []):
+            if shape == "cylinder":
+                box = Cylinder(name=name, radius=dims[0] / 2, height=dims[2], pose=pose).get_cuboid()
+            else:
+                box = Cuboid(name=name, dims=dims, pose=pose)
+            world.cuboid.append(box)
+        self.planner.update_world(world)
+        self.current = key
+        self.swaps += 1
+
+    def of(self, key):
+        return self.bodies.get(key) if key is not None else None
+
+
+class PathCheck:
+    """Is a straight move -- the joint blend MoveZ makes -- clear of what the planner knows?
+
+    The grasp's vertical moves are IK and interpolation, which the planner
+    never sees; this is what checks them (docs/grasp_rl_plan.md §2). The blend
+    is sampled, and every collision sphere of the arm is held MARGIN clear of
+    every body the environment was given (exact shapes) and, all but the
+    fingers', of the static obstacles -- the fingers are meant to come down to
+    the table. The planner-only keep_out volumes are not checked: a grip goes
+    down through them by design. Nor, yet, is the MAP: on a server that maps
+    only the static obstacles are checked.
+    """
+
+    MARGIN = 0.005
+    SAMPLES = 35
+
+    def __init__(self, kin, robot_key, scene):
+        self.kin, self.scene = kin, scene
+        kc = kin.config.kinematics_config
+
+        def mask(pick):
+            idx = []
+            for link in kc.all_link_names:
+                if pick(link):
+                    try:
+                        idx += [int(i) for i in kc.get_sphere_index_from_link_name(link).cpu()]
+                    except Exception:
+                        pass
+            return idx
+
+        mask_only = set(ROBOTS[robot_key]["arm"]["mask_only_links"])
+        self.skip = mask(lambda l: l in mask_only)
+        self.fingers = mask(lambda l: l.startswith("robotiq_85_")
+                            and ("knuckle" in l or "finger" in l))
+
+    @staticmethod
+    def _box(c, r, dims, pose):
+        R = torch.as_tensor(quat_to_matrix_np(pose[3:]), device=c.device, dtype=c.dtype)
+        local = (c - torch.as_tensor(pose[:3], device=c.device, dtype=c.dtype)) @ R
+        q = local.abs() - torch.as_tensor(dims, device=c.device, dtype=c.dtype) / 2
+        return q.clamp(min=0).norm(dim=-1) + q.max(dim=-1).values.clamp(max=0) - r
+
+    @staticmethod
+    def _cylinder(c, r, dims, pose):
+        radial = (c[..., :2] - torch.as_tensor(pose[:2], device=c.device, dtype=c.dtype)).norm(dim=-1) \
+            - dims[0] / 2
+        axial = (c[..., 2] - pose[2]).abs() - dims[2] / 2
+        q = torch.stack([radial, axial], dim=-1)
+        return q.clamp(min=0).norm(dim=-1) + q.max(dim=-1).values.clamp(max=0) - r
+
+    def __call__(self, q0, q1, bodies):
+        t = torch.linspace(0.0, 1.0, self.SAMPLES, device=q0.device).unsqueeze(1)
+        qs = (1 - t) * q0.unsqueeze(0) + t * q1.unsqueeze(0)
+        js = JointState.from_position(qs, joint_names=self.kin.joint_names)
+        s = self.kin.compute_kinematics(js).robot_spheres.reshape(self.SAMPLES, -1, 4)
+        live = s[..., 3] > 0
+        live[:, self.skip] = False
+        c, r = s[..., :3], s[..., 3]
+        for name, shape, dims, pose in bodies or []:
+            fn = self._cylinder if shape == "cylinder" else self._box
+            d = torch.where(live, fn(c, r, dims, pose), torch.full_like(r, 1e9))
+            worst = float(d.min())
+            if worst < self.MARGIN:
+                return False, f"straight move would pass {1000 * worst:+.0f} mm from {name}"
+        arm = live.clone()
+        arm[:, self.fingers] = False
+        for name, dims, pose, _ in self.scene.obstacles:
+            d = torch.where(arm, self._box(c, r, dims, pose), torch.full_like(r, 1e9))
+            worst = float(d.min())
+            if worst < self.MARGIN:
+                return False, f"straight move would put the arm {1000 * worst:+.0f} mm into {name}"
+        return True, None
 
 
 def check_curobo_pin(allow_drift):
@@ -733,6 +884,9 @@ def main():
               f"{mapping.mapper.memory_usage_mb():.0f} MB", flush=True)
         print(f"[planner] cameras: {cams}", flush=True)
 
+    worlds = Worlds(scene, planner)
+    path_check = PathCheck(kin, args.robot, scene)
+
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
@@ -770,7 +924,7 @@ def main():
             conn, _ = srv.accept()
             print("[planner] client connected", flush=True)
             serve(conn, args, scene, planner, kin, tool_frame, approach_ik,
-                  mapping, wait_readable)
+                  mapping, wait_readable, worlds, path_check)
     except KeyboardInterrupt:
         print("\n[planner] stopped", flush=True)
     finally:
@@ -778,13 +932,21 @@ def main():
 
 
 def serve(conn, args, scene, planner, kin, tool_frame, approach_ik, mapping,
-          wait_readable):
+          wait_readable, worlds, path_check):
     """Answer one client until it disconnects."""
     try:
         while True:
             wait_readable(conn)
             header, payload = recv_msg(conn)
             op = header.get("op")
+            # A request for one environment's world gets that world loaded
+            # first; without a key it plans against whatever is loaded.
+            key = header.get("world")
+            if op in ("plan", "ik", "plan_joint") and key is not None and mapping is None:
+                worlds.use(key)
+            bodies = (worlds.of(key) if key is not None else None)
+            if bodies is None:
+                bodies = scene_bodies(scene)
 
             if op == "scene":
                 # Handshake. The two processes never exchange geometry, so
@@ -805,15 +967,30 @@ def serve(conn, args, scene, planner, kin, tool_frame, approach_ik, mapping,
                 send_msg(conn, {"ok": asked == args.scene and wants in (None, maps),
                                 "scene": args.scene, "mapping": maps})
 
+            elif op == "world":
+                if mapping is not None:
+                    send_msg(conn, {"ok": False, "status":
+                                    "this server maps: the bodies must come from the cameras"})
+                    continue
+                worlds.set(header["key"], header.get("bodies", []))
+                send_msg(conn, {"ok": True})
+
             elif op == "ik":
-                out, blob = handle_ik(approach_ik, kin, tool_frame, header)
+                out, blob = handle_ik(approach_ik, kin, tool_frame, header,
+                                      path_check, bodies if key is not None else [])
                 if not out["ok"]:
-                    print(f"[planner] ik FAILED for {header.get('target')}",
-                          flush=True)
+                    print(f"[planner] ik FAILED for {header.get('target')}: "
+                          f"{out.get('status')}", flush=True)
+                send_msg(conn, out, blob)
+
+            elif op == "plan_joint":
+                out, blob = handle_plan_joint(planner, kin, header, bodies)
+                print(f"[planner] plan to joints {'ok' if out['ok'] else 'FAILED: ' + out.get('status', '')}",
+                      flush=True)
                 send_msg(conn, out, blob)
 
             elif op == "plan":
-                out, blob = handle_plan(planner, kin, tool_frame, header, approach_ik)
+                out, blob = handle_plan(planner, kin, tool_frame, header, approach_ik, bodies)
                 if out["ok"]:
                     gap = out.get("clearance")
                     print(f"[planner] plan ok: {out['solve_ms']:.0f} ms, "

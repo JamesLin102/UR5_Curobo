@@ -100,6 +100,11 @@ class SceneSpec:
         shapes      {unmapped body name: "cylinder"}; a body not named here is a
                     cuboid, so a scene with only boxes leaves this out. A
                     cylinder's dims are [2r, 2r, height], axis along its z.
+        solid       names of unmapped bodies that are also COLLIDERS: kinematic
+                    (they do not move when hit), so the arm is really stopped
+                    by them and the contact is reported (Isaac Lab backend).
+                    Unmapped bodies not named here are visual only, as the
+                    draggable slab in pick_place is.
         keep_out    bodies the PLANNER is told about and nothing else: never
                     spawned in the simulator, never seen by a camera. Volumes
                     the arm must not be planned into although nothing is
@@ -126,6 +131,7 @@ class SceneSpec:
     shapes: Dict[str, str] = field(default_factory=dict)
     planner_joint_limits: Dict[str, Tuple[float, float]] = field(default_factory=dict)
     keep_out: List[Body] = field(default_factory=list)
+    solid: List[str] = field(default_factory=list)
 
     def __post_init__(self):
         for name, cam in self.cameras.items():
@@ -159,6 +165,9 @@ class SceneSpec:
                 raise ValueError(f"cylinder {name!r} has dims {unmapped[name]}; "
                                  f"want [2r, 2r, height]")
 
+        for name in self.solid:
+            if name not in unmapped:
+                raise ValueError(f"solid names {name!r}, which is not an unmapped body")
         for joint, (lo, hi) in self.planner_joint_limits.items():
             if not lo < hi:
                 raise ValueError(f"planner_joint_limits[{joint!r}] = ({lo}, {hi}) is empty")

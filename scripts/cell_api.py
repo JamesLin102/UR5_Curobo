@@ -61,6 +61,13 @@ class ResetOptions:
     clear_map: bool = True                  # empty the server's map first
     scan: bool = True                       # sweep scene.scan_poses to seed the map
     settle_steps: int = 60
+    # Anywhere, not only under a target: name -> [x, y, z, qw, qx, qy, qz],
+    # env-local. A payload given here ignores block_on.
+    payload_poses: Optional[Dict[str, List[float]]] = None
+    # Unmapped bodies by name -> pose as above, or None to take the body out of
+    # the cell for this episode (it is moved under the table, out of every
+    # camera's view). Bodies not named keep where they are.
+    body_poses: Optional[Dict[str, Optional[List[float]]]] = None
 
 
 @dataclass
@@ -145,6 +152,36 @@ class MoveZ:
     fail_idle: int = 0
     fatal: bool = True
     label: str = ""
+    # Ask the planner to collision-check the straight move before it is made
+    # (the joint blend, against the bodies it knows of). A refused check fails
+    # the op like a missing IK does, with the planner's reason.
+    check: bool = False
+
+
+@dataclass
+class Retrace:
+    """Blend in joint space back to where the last planned move ended.
+
+    Not planned and not checked, because it needs neither: after a straight
+    move down (checked on the way), the way back is the same joint path in
+    reverse. For getting out from among obstacles when a fresh IK for the way
+    up comes back on a slightly different path, closer to them.
+    """
+    n_steps: int = MOVE_Z_STEPS
+    why: str = "nothing to go back to"
+    fail_idle: int = 0
+    fatal: bool = True
+    label: str = ""
+
+
+@dataclass
+class MoveJ:
+    """Plan to a joint configuration (planner order), e.g. back to HOME."""
+    q: Sequence[float]
+    why: str = "no plan home"
+    fail_idle: int = 0
+    fatal: bool = True
+    label: str = ""
 
 
 @dataclass
@@ -183,8 +220,9 @@ class ProgramResult:
 
 
 def fail_reason(op, result):
-    """The reason a failed op reports: its `why`, plus the server's words for a plan."""
-    if isinstance(op, MoveTo):
+    """The reason a failed op reports: its `why`, plus the server's words when it gave any."""
+    if isinstance(op, (MoveTo, MoveJ)) or (isinstance(op, MoveZ) and result.reason
+                                            and result.reason != "no IK"):
         return f"{op.why}: {result.reason}"
     return op.why
 
@@ -203,10 +241,12 @@ def run_ops_blocking(cell: CellLike, ops: Sequence[Op]) -> ProgramResult:
             r = cell.idle(op.n)
         elif isinstance(op, Scan):
             r = cell.scan()
+        elif isinstance(op, MoveJ) and hasattr(cell, "move_joints"):
+            r = cell.move_joints(op.q)
         else:
             raise TypeError(f"not an op: {op!r}")
         out.results.append((op, r))
-        if isinstance(op, (MoveTo, MoveZ)) and not r.ok:
+        if isinstance(op, (MoveTo, MoveZ, MoveJ, Retrace)) and not r.ok:
             if out.ok:
                 out.ok, out.why = False, fail_reason(op, r)
             if op.fail_idle:

@@ -28,11 +28,13 @@ def tool_pose(x, y, z, yaw):
             0.0, math.cos(yaw / 2.0), math.sin(yaw / 2.0), 0.0]
 
 
-def leg_ops(pose, close, open_first, descend, lift):
+def leg_ops(pose, close, open_first, descend, lift, check=False, hold=20):
     """One leg as a program: above, down, grip, up.
 
     open_first: a pick needs an open hand. After a pick that closed on nothing
     the gripper is still shut, so it opens where the arm stands, first.
+    check: have the planner collision-check the two straight moves (MoveZ.check).
+    hold: sim steps to hold at the top, once lifted.
     """
     above = list(pose)
     above[2] += descend
@@ -40,11 +42,11 @@ def leg_ops(pose, close, open_first, descend, lift):
     return ops + [
         MoveTo(above, why="no plan", fail_idle=30),
         Idle(20),
-        MoveZ(-descend, why="no IK going down"),
+        MoveZ(-descend, why="no IK going down", check=check),
         Idle(15),
         Grip(close=close, label=GRIP_LABEL),
-        MoveZ(lift, why="no IK going up", fatal=False),
-        Idle(20),
+        MoveZ(lift, why="no IK going up", fatal=False, check=check),
+        Idle(hold),
     ]
 
 

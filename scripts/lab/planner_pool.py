@@ -2,7 +2,9 @@
 
     pool = make_pool(cell_cfg, num_envs, log)
     pool.plan(env_ids, q, targets)      -> [reply header per env]
-    pool.ik(env_ids, q, targets)        -> [joint list, or None, per env]
+    pool.plan_joint(env_ids, q, goals)  -> [reply header per env]
+    pool.ik(env_ids, q, targets, check) -> [(joint list or None, reason), per env]
+    pool.set_world(env_ids, bodies)     -> tell the planner each env's bodies
     pool.map_frame(env, q, depth, K, camera)
     pool.reset_map(env_ids)
 
@@ -40,7 +42,18 @@ class PlannerPool:
         """One reply header per env; with "traj" (n x dof float32) when "ok"."""
         raise NotImplementedError
 
-    def ik(self, env_ids, q, targets) -> List[Optional[list]]:
+    def plan_joint(self, env_ids, q, goals) -> List[dict]:
+        raise NotImplementedError
+
+    def ik(self, env_ids, q, targets, check=None) -> List[tuple]:
+        """(joints or None, reason) per env; check[k]: collision-check the straight move."""
+        raise NotImplementedError
+
+    def set_world(self, env_ids, bodies) -> None:
+        """bodies[k]: [(name, shape, dims, pose)] for env_ids[k], env-local.
+
+        From then on that env plans in a world of the static scene plus these
+        (training mode; refused when mapping)."""
         raise NotImplementedError
 
     def map_frame(self, env: int, q, depth, K, camera: str) -> None:
@@ -67,6 +80,7 @@ class ServerPool(PlannerPool):
     """
 
     def __init__(self, cell, num_envs, log=print):
+        self.worlds = set()          # envs whose world was set: their requests name it
         k = cell.num_servers or num_envs
         if cell.mapping and k != num_envs:
             raise ValueError(
@@ -109,11 +123,26 @@ class ServerPool(PlannerPool):
             raise ValueError("the scene has no targets to probe the planner with")
         return list(self.clients[0].plan(home, list(target))["joint_names"])
 
-    def plan(self, env_ids, q, targets):
-        return self._each(env_ids, lambda c, k: c.plan(q[k], [float(v) for v in targets[k]]))
+    def _world(self, env):
+        return int(env) if int(env) in self.worlds else None
 
-    def ik(self, env_ids, q, targets):
-        return self._each(env_ids, lambda c, k: c.ik(q[k], [float(v) for v in targets[k]]))
+    def plan(self, env_ids, q, targets):
+        return self._each(env_ids, lambda c, k: c.plan(
+            q[k], [float(v) for v in targets[k]], world=self._world(env_ids[k])))
+
+    def plan_joint(self, env_ids, q, goals):
+        return self._each(env_ids, lambda c, k: c.plan_joint(
+            q[k], [float(v) for v in goals[k]], world=self._world(env_ids[k])))
+
+    def ik(self, env_ids, q, targets, check=None):
+        check = check if check is not None else [False] * len(env_ids)
+        return self._each(env_ids, lambda c, k: c.ik_checked(
+            q[k], [float(v) for v in targets[k]], world=self._world(env_ids[k]),
+            check=check[k]))
+
+    def set_world(self, env_ids, bodies):
+        self._each(env_ids, lambda c, k: c.set_world(int(env_ids[k]), bodies[k]))
+        self.worlds |= {int(e) for e in env_ids}
 
     def map_frame(self, env, q, depth, K, camera):
         self._client(env).map_frame(q, depth, K, camera)
@@ -138,8 +167,14 @@ class NullPool(PlannerPool):
     def plan(self, env_ids, q, targets):
         return [{"ok": False, "status": "no planner (planner_mode 'none')"} for _ in env_ids]
 
-    def ik(self, env_ids, q, targets):
-        return [None for _ in env_ids]
+    def plan_joint(self, env_ids, q, goals):
+        return self.plan(env_ids, q, goals)
+
+    def ik(self, env_ids, q, targets, check=None):
+        return [(None, "no planner") for _ in env_ids]
+
+    def set_world(self, env_ids, bodies):
+        pass
 
     def map_frame(self, env, q, depth, K, camera):
         pass

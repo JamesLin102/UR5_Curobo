@@ -76,9 +76,8 @@ class Planner:
                 f"MAPPING MISMATCH: {on} maps and {off} does not. Start both "
                 f"with --no-mapping, or neither.")
 
-    def plan(self, q, target):
-        """Header dict; with "traj" (n x dof float32) added when "ok"."""
-        send_msg(self.sock, {"op": "plan", "q": list(map(float, q)), "target": target})
+    def _traj(self, msg):
+        send_msg(self.sock, msg)
         header, payload = recv_msg(self.sock)
         if header.get("ok"):
             header["traj"] = np.frombuffer(payload, dtype=np.float32).reshape(
@@ -86,13 +85,51 @@ class Planner:
             )
         return header
 
+    def plan(self, q, target, world=None):
+        """Header dict; with "traj" (n x dof float32) added when "ok".
+
+        `world`: plan in that environment's world (set_world), not whatever
+        the server has loaded.
+        """
+        return self._traj({"op": "plan", "q": list(map(float, q)), "target": target,
+                           "world": world})
+
+    def plan_joint(self, q, goal, world=None):
+        """As plan(), to a joint configuration in the planner's joint order."""
+        return self._traj({"op": "plan_joint", "q": list(map(float, q)),
+                           "goal": list(map(float, goal)), "world": world})
+
     def ik(self, q, target):
         """Joint angles for one tool pose, or None. See planner_server.handle_ik."""
-        send_msg(self.sock, {"op": "ik", "q": list(map(float, q)), "target": target})
+        joints, _ = self.ik_checked(q, target)
+        return joints
+
+    def ik_checked(self, q, target, world=None, check=False):
+        """(joint angles or None, the server's reason when None).
+
+        check: also collision-check the joint blend from q to the answer (the
+        straight move the cell will make) against `world`'s bodies and the
+        static obstacles; a move that fails comes back as None.
+        """
+        send_msg(self.sock, {"op": "ik", "q": list(map(float, q)), "target": target,
+                             "world": world, "check": bool(check)})
         header, payload = recv_msg(self.sock)
         if not header.get("ok"):
-            return None
-        return np.frombuffer(payload, dtype=np.float32).tolist()
+            return None, header.get("status", "no IK")
+        return np.frombuffer(payload, dtype=np.float32).tolist(), None
+
+    def set_world(self, key, bodies):
+        """Tell a --no-mapping server where one environment's bodies stand.
+
+        bodies: [(name, shape, dims, pose)], shape "cuboid" or "cylinder",
+        dims and pose as in scenes.base.Body. Refused by a server that maps.
+        """
+        send_msg(self.sock, {"op": "world", "key": key,
+                             "bodies": [[n, s, list(map(float, d)), list(map(float, p))]
+                                        for n, s, d, p in bodies]})
+        header, _ = recv_msg(self.sock)
+        if not header.get("ok"):
+            raise RuntimeError(f"planner refused the world: {header.get('status')}")
 
     def map_frame(self, q, depth, K, cam_name):
         send_msg(

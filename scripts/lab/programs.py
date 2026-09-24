@@ -23,8 +23,8 @@ without a tick, as its blocking counterpart returns without a step.
 import numpy as np
 
 from cell_api import (GRIP_EXTRA_STEPS, SCAN_BLEND_STEPS, SCAN_STEPS, SETTLE_MAX_STEPS,
-                      SETTLE_QUIET_STEPS, SETTLE_TOL, Grip, GripResult, Idle, MoveResult,
-                      MoveTo, MoveZ, ProgramResult, Scan, fail_reason)
+                      SETTLE_QUIET_STEPS, SETTLE_TOL, Grip, GripResult, Idle, MoveJ,
+                      MoveResult, MoveTo, MoveZ, ProgramResult, Retrace, Scan, fail_reason)
 from rig import SIM_DT
 
 
@@ -32,7 +32,8 @@ class _Run:
     """One op in one environment.
 
     request()  what it needs from the planner to start: None, or
-               ("plan" | "ik", target pose)
+               ("plan", target pose) | ("plan_joint", joint goal) |
+               ("ik", target pose, check the straight move?)
     start()    given the planner's reply; may finish at once
     command()  before each tick: set this tick's targets
     after()    after each tick: look, and maybe finish
@@ -79,10 +80,52 @@ class _MoveTo(_Run):
         self.k += 1
         if self.k == len(self.traj):
             self.cell.goal[self.env] = list(self.op.pose)
+            self.cell.plan_end[self.env] = np.asarray(self.traj[-1], dtype=np.float64)
             self.finish(MoveResult(ok=True, solve_ms=self.reply["solve_ms"],
                                    waypoints=len(self.traj),
                                    clearance=self.reply.get("clearance"),
                                    sim_steps=self.cell.steps - self.t0))
+
+
+class _MoveJ(_MoveTo):
+    """Plan to a joint configuration, then play it as MoveTo does."""
+
+    def request(self):
+        return ("plan_joint", list(self.op.q))
+
+    def after(self):
+        if self.cell.cams and self.k % self.cell.cfg.map_every == 0:
+            self.cell.fuse([self.env])
+        self.k += 1
+        if self.k == len(self.traj):
+            # Not a tool goal: a MoveZ after this has nothing to go straight from.
+            self.cell.goal[self.env] = None
+            self.finish(MoveResult(ok=True, solve_ms=self.reply["solve_ms"],
+                                   waypoints=len(self.traj),
+                                   clearance=self.reply.get("clearance"),
+                                   sim_steps=self.cell.steps - self.t0))
+
+
+class _Retrace(_Run):
+    """Joint-space blend back to where the last planned move ended (cell.plan_end)."""
+
+    def start(self, reply):
+        end = self.cell.plan_end[self.env]
+        if end is None:
+            self.finish(MoveResult(ok=False, reason="nothing planned to go back to"))
+            return
+        self.q0 = np.asarray(self.cell.q_now(self.env), dtype=np.float64)
+        self.q1 = end
+        self.i, self.t0 = 0, self.cell.steps
+
+    def command(self):
+        blend = (self.i + 1) / self.op.n_steps
+        self.cell.command_arm(self.env, self.q0 + (self.q1 - self.q0) * blend)
+
+    def after(self):
+        self.i += 1
+        if self.i == self.op.n_steps:
+            self.finish(MoveResult(ok=True, sim_steps=self.cell.steps - self.t0))
 
 
 class _MoveZ(_Run):
@@ -94,16 +137,19 @@ class _MoveZ(_Run):
             return None
         self.target = list(goal)
         self.target[2] += self.op.dz
-        return ("ik", self.target)
+        return ("ik", self.target, bool(self.op.check))
 
     def start(self, reply):
         if self.cell.goal[self.env] is None:
             self.finish(MoveResult(ok=False, reason="no goal yet: move_to first"))
             return
-        if reply is None:
-            self.cell.log(f"  no IK for z{self.op.dz:+.3f} m; skipping", self.env)
-            self.finish(MoveResult(ok=False, reason="no IK"))
+        joints, why = reply if isinstance(reply, tuple) else (reply, None)
+        if joints is None:
+            self.cell.log(f"  no IK for z{self.op.dz:+.3f} m ({why or 'no IK'}); skipping",
+                          self.env)
+            self.finish(MoveResult(ok=False, reason=why or "no IK"))
             return
+        reply = joints
         self.q0 = np.asarray(self.cell.q_now(self.env), dtype=np.float64)
         self.q1 = np.asarray(reply, dtype=np.float64)
         n = self.op.n_steps
@@ -219,7 +265,8 @@ class _Scan(_Run):
         self.finish(self.fused)
 
 
-RUNS = {MoveTo: _MoveTo, MoveZ: _MoveZ, Grip: _Grip, Idle: _Idle, Scan: _Scan}
+RUNS = {MoveTo: _MoveTo, MoveJ: _MoveJ, MoveZ: _MoveZ, Retrace: _Retrace, Grip: _Grip,
+        Idle: _Idle, Scan: _Scan}
 
 
 class _Program:
@@ -238,7 +285,7 @@ class _Program:
     def finish_op(self, op, record, result):
         if record:
             self.result.results.append((op, result))
-        if isinstance(op, (MoveTo, MoveZ)) and not result.ok:
+        if isinstance(op, (MoveTo, MoveZ, MoveJ, Retrace)) and not result.ok:
             if self.result.ok:
                 self.result.ok, self.result.why = False, fail_reason(op, result)
             if op.fatal:
@@ -301,19 +348,25 @@ class ProgramRunner:
 
     def _ask(self, starting):
         """Batch every planner request made on this tick, by kind."""
-        replies, asks = {}, {"plan": [], "ik": []}
+        replies, asks = {}, {"plan": [], "plan_joint": [], "ik": []}
         for p in starting:
             req = p.run.request()
             if req is not None:
-                asks[req[0]].append((p.env, req[1]))
+                asks[req[0]].append((p.env, req[1:]))
         pool = self.cell.pool
-        for kind, fn in (("plan", pool.plan), ("ik", pool.ik)):
+        for kind in asks:
             if not asks[kind]:
                 continue
             envs = [e for e, _ in asks[kind]]
             q = np.stack([self.cell.q_now(e) for e in envs])
-            targets = np.asarray([t for _, t in asks[kind]], dtype=np.float64)
-            for e, r in zip(envs, fn(envs, q, targets)):
+            targets = np.asarray([a[0] for _, a in asks[kind]], dtype=np.float64)
+            if kind == "plan":
+                got = pool.plan(envs, q, targets)
+            elif kind == "plan_joint":
+                got = pool.plan_joint(envs, q, targets)
+            else:
+                got = pool.ik(envs, q, targets, [a[1] for _, a in asks[kind]])
+            for e, r in zip(envs, got):
                 replies[e] = r
         return replies
 
@@ -321,6 +374,6 @@ class ProgramRunner:
         """The app is closing: end the op as its blocking version would."""
         op = p.run.op
         result = MoveResult(ok=False, reason="simulation closed") \
-            if isinstance(op, (MoveTo, MoveZ)) else p.run.result
+            if isinstance(op, (MoveTo, MoveZ, MoveJ, Retrace)) else p.run.result
         p.finish_op(op, p.record, result)
         p.run, p.queue, p.done = None, [], True

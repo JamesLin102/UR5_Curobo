@@ -29,7 +29,7 @@ import numpy as np
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import Articulation, RigidObject, RigidObjectCfg
-from isaaclab.sensors import Camera, CameraCfg, TiledCameraCfg
+from isaaclab.sensors import Camera, CameraCfg, ContactSensor, ContactSensorCfg, TiledCameraCfg
 
 from rig import ROBOTS
 from sim_usd import (GRIP_MATERIAL, GRIP_MATERIAL_PATH, apply_linkage, apply_urdf_colors,
@@ -54,6 +54,8 @@ class CellHandles:
     tool: Tuple[str, np.ndarray, np.ndarray]          # (body, offset pos, offset quat wxyz)
     payload: Dict[str, RigidObject] = field(default_factory=dict)
     unmapped: Dict[str, str] = field(default_factory=dict)     # name -> prim path pattern
+    solid: Dict[str, RigidObject] = field(default_factory=dict)      # the colliding unmapped
+    contacts: Dict[str, ContactSensor] = field(default_factory=dict)  # one per solid body
     cameras: Dict[str, Camera] = field(default_factory=dict)
     camera_mounts: Dict[str, Tuple[str, np.ndarray]] = field(default_factory=dict)  # link cams
     pins: List[str] = field(default_factory=list)     # loop closures made, per env robot
@@ -76,18 +78,35 @@ def _spawn_obstacles(spec):
 
 
 def _spawn_unmapped(spec):
-    """Bodies only the simulator knows: rendered into depth, never collided with."""
-    out = {}
+    """Bodies only the simulator knows.
+
+    Visual ones (the default) are rendered into depth and never collided with.
+    The scene's `solid` ones are kinematic colliders -- they stop the arm and
+    do not move when hit -- with a contact sensor each, so a touch is known.
+    Returns (visual: name -> prim path pattern, solid: name -> RigidObject,
+    contacts: name -> ContactSensor).
+    """
+    visual, solid, contacts = {}, {}, {}
     for name, dims, pose, rgb in spec.unmapped:
+        is_solid = name in spec.solid
+        physics = dict(rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+                       collision_props=sim_utils.CollisionPropertiesCfg(),
+                       activate_contact_sensors=True) if is_solid else {}
         if spec.shape(name) == "cylinder":
             cfg = sim_utils.CylinderCfg(radius=float(dims[0]) / 2, height=float(dims[2]),
-                                        axis="Z", visual_material=_colour(rgb))
+                                        axis="Z", visual_material=_colour(rgb), **physics)
         else:
-            cfg = sim_utils.CuboidCfg(size=tuple(dims), visual_material=_colour(rgb))
-        cfg.func(f"{ENV_NS}/{name}", cfg,
-                 translation=tuple(pose[:3]), orientation=tuple(pose[3:]))
-        out[name] = f"{ENV_NS}/{name}"
-    return out
+            cfg = sim_utils.CuboidCfg(size=tuple(dims), visual_material=_colour(rgb), **physics)
+        path = f"{ENV_NS}/{name}"
+        if not is_solid:
+            cfg.func(path, cfg, translation=tuple(pose[:3]), orientation=tuple(pose[3:]))
+            visual[name] = path
+            continue
+        solid[name] = RigidObject(RigidObjectCfg(
+            prim_path=path, spawn=cfg,
+            init_state=RigidObjectCfg.InitialStateCfg(pos=tuple(pose[:3]), rot=tuple(pose[3:]))))
+        contacts[name] = ContactSensor(ContactSensorCfg(prim_path=path, update_period=0.0))
+    return visual, solid, contacts
 
 
 def _spawn_payload(spec):
@@ -197,11 +216,11 @@ def spawn_cell(scene, spec, cell):
     light.func("/World/DistantLight", light)
 
     _spawn_obstacles(spec)
-    unmapped = _spawn_unmapped(spec)
+    unmapped, solid, contacts = _spawn_unmapped(spec)
     payload = _spawn_payload(spec)
 
     handles = CellHandles(robot=robot, urdf=urdf, tool=tool, payload=payload,
-                          unmapped=unmapped)
+                          unmapped=unmapped, solid=solid, contacts=contacts)
     if cell.mapping:
         ctx = dict(stage=stage, robot0=robot0, urdf=urdf, cell=cell,
                    mounts=handles.camera_mounts)
@@ -217,8 +236,9 @@ def spawn_cell(scene, spec, cell):
             handles.pads = bind_pad_material(stage, path, robot_spec["gripper"]["pad_links"])
 
     scene.articulations["robot"] = robot
-    for name, obj in payload.items():
+    for name, obj in list(payload.items()) + list(solid.items()):
         scene.rigid_objects[name] = obj
+    # The contact sensors are updated by the cell, as the cameras are.
     # The cameras are deliberately NOT registered in scene.sensors; the cell
     # updates them itself. Registered, scene.reset() would call Camera.reset(),
     # which re-reads the camera's pose through an XformPrimView -- and on the

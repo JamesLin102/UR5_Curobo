@@ -79,6 +79,15 @@ class LabCell:
         self.bodies = {name: sim_utils.XformPrimView(path, device=self.device,
                                                      sync_usd_on_fabric_write=True)
                        for name, path in h.unmapped.items()}
+        # The colliding ones are rigid bodies, moved through PhysX, not USD.
+        self.solid, self.contacts = h.solid, h.contacts
+        # Where every unmapped body stands, per env, env-local; None = taken
+        # out for this episode. What the camera check measures against.
+        self.body_pose = {n: [list(p) for _ in range(self.num_envs)]
+                          for n, _, p, _ in self.spec.unmapped}
+        # The largest contact force any solid body has felt, per env, since
+        # clear_contacts(). A touch, not a measurement of how hard.
+        self.contact_peak = np.zeros(self.num_envs)
         self._payload_home = {b[0]: np.array(b[2][:3], dtype=np.float64)
                               for b in self.spec.payload}
 
@@ -86,6 +95,7 @@ class LabCell:
         self._render = self.sim.has_gui() or self.sim.has_rtx_sensors()
         self.steps = 0
         self.goal = [None] * self.num_envs       # last commanded tool pose, env-local
+        self.plan_end = [None] * self.num_envs   # joints where the last MoveTo ended (Retrace)
         self.closed = np.zeros(self.num_envs, dtype=bool)
         self._arm_cmd = np.zeros((self.num_envs, len(self.arm_idx)))
         self._grip_cmd = np.zeros((self.num_envs, len(self.grip_idx_all)))
@@ -179,6 +189,7 @@ class LabCell:
             self.sim.render()
         self.scene.update(self.dt)
         self.update_cameras()
+        self._update_contacts()
         self.steps += 1
         self._refresh()
         self._hist[:, self._hist_at] = self._q
@@ -190,6 +201,38 @@ class LabCell:
         the scene does not update them: this does, after every step."""
         for cam in self.cams.values():
             cam.update(self.dt)
+
+    def _update_contacts(self):
+        for sensor in self.contacts.values():
+            sensor.update(self.dt)
+            f = sensor.data.net_forces_w          # (num_envs, bodies, 3)
+            if f is None:
+                continue
+            peak = f.norm(dim=-1).amax(dim=-1).cpu().numpy()
+            self.contact_peak = np.maximum(self.contact_peak, peak)
+
+    def clear_contacts(self, env_ids):
+        self.contact_peak[list(env_ids)] = 0.0
+
+    def place_bodies(self, env_ids, poses):
+        """poses[k]: {name: pose or None} for env_ids[k]; env-local. None takes it out."""
+        for e, want in zip(env_ids, poses):
+            for name, pose in (want or {}).items():
+                if name not in self.body_pose:
+                    raise ValueError(f"no unmapped body {name!r} in this scene")
+                self.body_pose[name][e] = None if pose is None else list(pose)
+                # Out of the cell: under the table and the ground, where no
+                # camera looks and nothing reaches.
+                p = [0.0, 0.0, -2.0, 1.0, 0.0, 0.0, 0.0] if pose is None else list(pose)
+                if len(p) == 3:
+                    p = p + [1.0, 0.0, 0.0, 0.0]
+                world = torch.tensor([list(np.asarray(p[:3]) + self.origins[e]) + p[3:]],
+                                     dtype=torch.float32, device=self.device)
+                if name in self.solid:
+                    self.solid[name].write_root_pose_to_sim(world, env_ids=self._ids([e]))
+                else:
+                    self.bodies[name].set_world_poses(positions=world[:, :3],
+                                                      orientations=world[:, 3:], indices=[e])
 
     def _refresh(self):
         """One device-to-host copy per tick; everything else reads these."""
@@ -274,6 +317,7 @@ class LabCell:
             self.command_arm(e, self.spec.home)
             self.command_gripper(e, self.grip_open)
             self.goal[e] = None
+            self.plan_end[e] = None
             self.closed[e] = False
         self._refresh()
 
@@ -290,6 +334,11 @@ class LabCell:
         for name, obj in self.payload.items():
             pose = torch.zeros((len(env_ids), 7), device=self.device)
             for k, (e, o) in enumerate(zip(env_ids, opts)):
+                given = (o.payload_poses or {}).get(name)
+                if given is not None:
+                    pose[k] = torch.tensor(list(np.asarray(given[:3]) + self.origins[e])
+                                           + list(given[3:]))
+                    continue
                 t = self.spec.targets[o.block_on]
                 pose[k, :3] = torch.tensor(
                     [t[0], t[1], self._payload_home[name][2]] + self.origins[e])
@@ -302,11 +351,10 @@ class LabCell:
                 continue
             if not self.bodies:
                 raise ValueError("slab_pose given, but the scene has no unmapped body")
-            view = next(iter(self.bodies.values()))
-            view.set_world_poses(
-                positions=torch.tensor([np.asarray(o.slab_pose[:3]) + self.origins[e]],
-                                       dtype=torch.float32, device=self.device),
-                indices=[e])
+            name = next(iter(self.bodies))
+            self.place_bodies([e], [{name: list(o.slab_pose[:3])}])
+        self.place_bodies(env_ids, [o.body_poses for o in opts])
+        self.clear_contacts(env_ids)
         clear = [e for e, o in zip(env_ids, opts) if o.clear_map]
         if clear:
             self.pool.reset_map(clear)
@@ -374,7 +422,12 @@ class LabCell:
         """Distance from each env-local point to the nearest surface the scene knows."""
         d = np.abs(pts[:, 2])                                   # the ground, z = 0
         boxes = [(dims, pose) for _, dims, pose, _ in self.spec.obstacles]
-        for name, dims, pose, _ in self.spec.unmapped:
+        for name, dims, _, _ in self.spec.unmapped:
+            pose = self.body_pose[name][env]
+            if pose is None:
+                continue
+            if len(pose) == 3:
+                pose = list(pose) + [1.0, 0.0, 0.0, 0.0]
             if self.spec.shape(name) == "cylinder":
                 R = quat_to_matrix(pose[3:])
                 local = (pts - np.asarray(pose[:3])) @ R
