@@ -31,7 +31,12 @@ from . import scene as G
 
 @dataclass
 class TaskCfg:
-    max_attempts: int = 3
+    # One attempt per episode, among layouts where only one grip works
+    # (decided 2026-09-24). With three attempts random actions lifted the cube
+    # in 96% of episodes and the oracle in 100%, so there was little to learn;
+    # first attempts on one-grip layouts are 50% random, 96% oracle.
+    # The observation keeps the last-attempt fields for when this is raised.
+    max_attempts: int = 1
     hold_steps: int = 30            # held this long at the top before it counts
     lift_min: float = 0.075         # the cube must rise this much (half of lift_m)
     # Holding, read the way the real 2F-85 can: the leader joint stalls short of
@@ -67,7 +72,7 @@ class TaskCfg:
     # The share of episodes drawn from layouts where only ONE of the two
     # face-square grips works: where choosing is the task (plan §2.2). The rest
     # are drawn from every eligible layout.
-    one_grip_fraction: float = 0.5
+    one_grip_fraction: float = 1.0
     # A grip counts as working only with this much between the arm's collision
     # spheres and the nearest cylinder, all the way down and up. The spheres do
     # not cover the arm's meshes exactly: grips the bank kept at 6 mm touched a

@@ -2,9 +2,8 @@
 
 A starting point, not a tuned one -- nothing has been trained yet. What shaped it:
 
-  - An episode is at most max_attempts (3) steps and pays out at its end, so
-    the horizon is short: gamma 0.9 discounts a success two attempts later
-    by 0.81, which still makes trying again worth it.
+  - An episode is one attempt (TaskCfg.max_attempts = 1): a contextual
+    bandit, so gamma hardly matters; 0.9 stays in case attempts go back up.
   - The actor sees what the real arm has (29 numbers), the critic that plus the
     truth (45): obs_groups maps the env's "policy" and "critic" groups onto them.
   - Both are small MLPs with observation normalisation; the observations are
