@@ -10,7 +10,7 @@ Checks, against the code the Isaac Sim backend actually runs:
                 the same order, as PickPlaceEnv._leg -- on success and on every
                 failure path -- and reports the same info and reason.
   Scorer        rewards, dones and observation vectors match the scoring
-                PickPlaceEnv.step did before it moved into pick_place_task,
+                PickPlaceEnv.step did before it moved into pick_place.task,
                 re-implemented below from that version.
   CellLike      SimEnv provides every member the protocol names.
 
@@ -27,8 +27,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 import scenes  # noqa: E402
 from cell_api import CellLike, GripResult, MoveResult, Observation, run_ops_blocking  # noqa: E402
-from pick_place_env import PickPlaceEnv  # noqa: E402
-from pick_place_task import Scorer, TaskCfg, leg_info, leg_ops  # noqa: E402
+from legs import leg_info, leg_ops  # noqa: E402
+from pick_place.isaacsim_env import PickPlaceEnv  # noqa: E402
+from pick_place.task import Scorer, TaskCfg  # noqa: E402
 
 FAILED = []
 
@@ -179,7 +180,7 @@ def test_scorer():
 
 
 def test_protocol():
-    import sim_env
+    from sim import sim_env
     members = [n for n in dir(CellLike) if not n.startswith("_")] + \
         list(CellLike.__annotations__)
     # Attributes set in __init__ cannot be seen on the class; the rest can.

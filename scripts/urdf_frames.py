@@ -1,6 +1,6 @@
 """Frame arithmetic read straight off a URDF. numpy and the standard library only.
 
-Both simulator backends need it (sim_env.py on Isaac Sim, lab/ on Isaac Lab),
+Both simulator backends need it (sim/sim_env.py on Isaac Sim, lab/ on Isaac Lab),
 and neither may import the other, so it lives here. Nothing in this file needs
 a running simulator.
 

@@ -7,7 +7,7 @@
 
 The flags mirror isaacsim_client.py's, so the two backends are driven the
 same way; AppLauncher adds its own (--headless, --device, --enable_cameras, ...).
-Choices come from the registries -- rig.ROBOTS, scenes/, lab.tasks.TASKS -- so a
+Choices come from the registries -- rig.ROBOTS, scenes, lab.tasks.TASKS -- so a
 new robot, scene or task shows up here without an edit.
 """
 
@@ -23,7 +23,7 @@ def add_args(ap, task="PickPlace"):
     ap.add_argument("--task", default=task, choices=sorted(TASKS))
     ap.add_argument("--robot", default=DEFAULT_ROBOT, choices=sorted(ROBOTS))
     ap.add_argument("--scene", default=scenes.DEFAULT, choices=scenes.available(),
-                    help="scene module under scripts/scenes/; must match the server")
+                    help="an example with a scene.py under scripts/; must match the server")
     ap.add_argument("--num_envs", type=int, default=1)
     ap.add_argument("--no-mapping", action="store_true")
     ap.add_argument("--no-overhead", action="store_true",

@@ -305,7 +305,7 @@ scripts/
   lab/                  Isaac Lab：cell、programs、planner_pool、scene_cfg、robots、markers、app
     tasks/__init__.py   任務註冊表（只放字串 entry point，不 import 範例）
     tasks/base.py       CellEnv
-  isaacsim/             Isaac Sim（凍結）：sim_env.py
+  sim/                  Isaac Sim（凍結）：sim_env.py。不叫 isaacsim：會蓋掉 Isaac Sim 本身的套件
 
   ── 範例 ──
   pick_place/
@@ -341,7 +341,7 @@ tools/                  維持扁平，檔名以範例開頭：check_pick_place_
 
 ### 相容性
 
-- `--scene pick_place`、gym id `Isaac-PickPlace-Ur5Robotiq-v0` 不變：`scenes.load(name)` 改成找 `scripts/<name>/scene.py`（`_bare` 之類的測試用場景另外處理）。
+- `--scene pick_place`、gym id `Isaac-PickPlace-Ur5Robotiq-v0` 不變：`scenes.load(name)` 改成找 `scripts/<name>/scene.py`；`_bare` 之類在程式裡建的場景用 `scenes.register()`。
 - 啟動指令會變（例如 `python scripts/pick_place/isaaclab_client.py`），README 與 `docs/isaaclab.md` 要一起改。不留轉接檔。
 - Isaac Sim 後端雖然凍結，這次搬移會動到它的 import，所以 `check_pick_place.py` 仍要跑一次。
 
@@ -412,7 +412,7 @@ GPU PhysX（128–256 個 UR5 + 2F-85，預估 1 GB 以內）、`BatchMotionPlan
 
 | # | 內容 | 通過條件 |
 |---|---|---|
-| M0 | 目錄重整（§8），行為不變 | 所有現有檢查全過、數字與現在一致：`check_pick_place_lab.py`、`check_pick_place.py`、`test_leg_ops.py`、`check_lab_modularity.py`（含新的依賴規則） |
+| M0 ✅ | 目錄重整（§8），行為不變 | 所有現有檢查全過、數字與現在一致：`check_pick_place_lab.py`、`check_pick_place.py`、`test_leg_ops.py`、`check_lab_modularity.py`（含新的依賴規則） |
 | M1 | 形狀、碰撞、reset 位姿、夾爪角度 `holding`，`pick_place` 行為不變 | 同上 |
 | M2 | `grasp/scene.py`、HOME 與掃描姿態、固定配置，真值 oracle | HOME 可達且視野涵蓋工作區；掃描姿態對虛擬障礙物淨空；空桌面 20/20 成功；`GRASP_Z` 在桌面上的量測；`holding` 與真值一致 |
 | M3 | 世界範本 + 做法 B、下降段碰撞檢查、隨機化與課程 | oracle 在各難度的成功率與失敗分類；取樣拒絕率（不可行、遮擋） |

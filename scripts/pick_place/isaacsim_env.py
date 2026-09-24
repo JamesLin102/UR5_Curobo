@@ -2,7 +2,7 @@
 
 One step is one LEG -- a pick if the gripper is empty, a place if it is
 holding something. The action says where the tool should be when the gripper
-acts; everything between here and there is sim_env.SimEnv's job:
+acts; everything between here and there is sim.sim_env.SimEnv's job:
 
     move_to(action + descend_m above)   planned by cuRobo, around the map
     move_tool_z(-descend_m)             IK + interpolation, straight down
@@ -26,11 +26,12 @@ import sys
 import gymnasium as gym
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import pick_place_task  # noqa: E402
-import sim_env  # noqa: E402
-from pick_place_task import OBS_DIM, Scorer, TaskCfg  # noqa: E402,F401
-from sim_env import EnvCfg, ResetOptions  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import legs  # noqa: E402
+from pick_place import task as pick_place_task  # noqa: E402
+from pick_place.task import OBS_DIM, Scorer, TaskCfg  # noqa: E402,F401
+from sim import sim_env  # noqa: E402
+from sim.sim_env import EnvCfg, ResetOptions  # noqa: E402
 
 
 class PickPlaceEnv(gym.Env):
@@ -47,7 +48,7 @@ class PickPlaceEnv(gym.Env):
         self.task = task or TaskCfg()
         sim_env.launch(headless=headless)
         self.sim = sim_env.SimEnv(env_cfg or EnvCfg())
-        # Goals, rewards and the observation vector: pick_place_task, shared
+        # Goals, rewards and the observation vector: pick_place.task, shared
         # with the Isaac Lab environment so both score an episode the same way.
         self.scorer = Scorer(self.sim.scene, self.task)
         self.block = self.scorer.block
@@ -99,7 +100,7 @@ class PickPlaceEnv(gym.Env):
 
     # --- the task ------------------------------------------------------------
 
-    tool_pose = staticmethod(pick_place_task.tool_pose)
+    tool_pose = staticmethod(legs.tool_pose)
 
     def _leg(self, pose, close, info):
         """Above, down, grip, up. Returns (ok, reason if not)."""

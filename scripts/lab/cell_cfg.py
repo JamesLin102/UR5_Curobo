@@ -15,7 +15,7 @@ from rig import DEFAULT_ROBOT, HOST, PORT
 @configclass
 class CellCfg:
     robot: str = DEFAULT_ROBOT          # key into rig.ROBOTS
-    scene: str = scenes.DEFAULT         # module under scripts/scenes/
+    scene: str = scenes.DEFAULT         # an example under scripts/, see scenes.load
     mapping: bool = True                # False: no cameras, the planner sees the static scene
     overhead: bool = True               # also build the scene's FIXED ("pose") cameras
     map_every: int = 6                  # fuse a frame every N sim steps while moving

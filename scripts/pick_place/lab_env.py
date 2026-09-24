@@ -1,7 +1,7 @@
 """Pick-and-place on Isaac Lab: the policy picks points, cuRobo moves.
 
-The same task as pick_place_env.PickPlaceEnv on the Isaac Sim side -- same
-legs, same rewards, same observation -- because both are pick_place_task. One
+The same task as pick_place.isaacsim_env.PickPlaceEnv on the Isaac Sim side --
+same legs, same rewards, same observation -- because both are pick_place.task. One
 step is one LEG per environment: a pick if its gripper is empty, a place if
 it is holding something.
 
@@ -9,7 +9,7 @@ it is holding something.
             coordinates -- the scene's; or in
             [-1, 1] with cfg.action_normalized, for RL libraries whose
             policies output roughly N(0, 1)
-    obs     {"policy": (num_envs, 25)}, see pick_place_task.OBS_DIM
+    obs     {"policy": (num_envs, 25)}, see pick_place.task.OBS_DIM
     extras  {"leg": [per-env dict: leg, failed?, solve_ms, clearance, ...]}
 
 Needs planner_server.py listening with the same --scene (and --no-mapping if
@@ -25,15 +25,15 @@ import torch
 from isaaclab.utils import configclass
 
 from cell_api import ResetOptions
-from pick_place_task import HIGH, LOW, OBS_DIM, Scorer, TaskCfg, leg_info, leg_ops, tool_pose
-
-from .base import CellEnv, CellEnvCfg
+from lab.tasks.base import CellEnv, CellEnvCfg
+from legs import leg_info, leg_ops, tool_pose
+from pick_place.task import HIGH, LOW, OBS_DIM, Scorer, TaskCfg
 
 
 def _mirror(dc):
     """A configclass with a dataclass's fields and defaults, kept in step with it.
 
-    The task's settings are defined once, in pick_place_task.TaskCfg; this is
+    The task's settings are defined once, in pick_place.task.TaskCfg; this is
     that, in the form Isaac Lab's config tooling (Hydra overrides) accepts.
     """
     ns = {"__annotations__": {f.name: f.type for f in fields(dc)}}

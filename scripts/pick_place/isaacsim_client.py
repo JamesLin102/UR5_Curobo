@@ -7,24 +7,25 @@ forever, which is what the README's numbers measure.
 
 The scene's `unmapped` bodies are never described to the planner. The arm can
 only discover them through the cameras, so avoiding them is proof the map is
-actually feeding the planner. Scenes live in scripts/scenes/, and both
+actually feeding the planner. Each example's scene is its scene.py, and both
 processes must be started with the same --scene.
 
 This process runs Isaac Sim ONLY and must never import cuRobo -- see sim_env.
 
 Start planner_server.py first, then:
-    python scripts/isaacsim_client.py
+    python scripts/pick_place/isaacsim_client.py
 """
 
 import argparse
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, SCRIPTS)
 import scenes  # noqa: E402
-import demo_loop  # noqa: E402
+from pick_place import demo_loop  # noqa: E402
 from rig import DEFAULT_ROBOT, ROBOTS  # noqa: E402
-import sim_env  # noqa: E402
+from sim import sim_env  # noqa: E402
 
 # planner_server.py flushes every line; without the same here, this side's
 # output sits in the stdout buffer whenever it is redirected to a file, and the
@@ -34,7 +35,7 @@ sys.stdout.reconfigure(line_buffering=True)
 _ap = argparse.ArgumentParser()
 _ap.add_argument("--robot", default=DEFAULT_ROBOT, choices=sorted(ROBOTS))
 _ap.add_argument("--scene", default=scenes.DEFAULT, choices=scenes.available(),
-                 help="scene module under scripts/scenes/; must match the server")
+                 help="an example with a scene.py under scripts/; must match the server")
 _ap.add_argument("--no-mapping", action="store_true")
 _ap.add_argument("--no-overhead", action="store_true",
                  help="wrist camera only, for A/B against the fixed camera")

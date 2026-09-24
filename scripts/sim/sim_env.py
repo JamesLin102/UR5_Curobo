@@ -1,6 +1,6 @@
 """The Isaac Sim side as a library: build the cell once, then drive it.
 
-    from sim_env import launch, SimEnv, EnvCfg, ResetOptions
+    from sim.sim_env import launch, SimEnv, EnvCfg, ResetOptions
     launch(headless=False)          # must come before anything else from Isaac
     env = SimEnv(EnvCfg(scene="pick_place"))
     obs = env.reset(ResetOptions(block_on=0))
@@ -25,12 +25,12 @@ from typing import Optional
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import scenes  # noqa: E402
 from planner_client import Planner  # noqa: E402
 from rig import ROBOTS, SIM_DT  # noqa: E402
 # The pieces both simulator backends share. Re-exported under their old names,
-# so `from sim_env import EnvCfg, frame_prim, ...` keeps working.
+# so `from sim.sim_env import EnvCfg, frame_prim, ...` keeps working.
 from cell_api import (GRIP_EXTRA_STEPS, HOLDING_RADIUS, MOVE_Z_STEPS,  # noqa: E402,F401
                       SCAN_BLEND_STEPS, SCAN_STEPS, SETTLE_MAX_STEPS,
                       SETTLE_QUIET_STEPS, SETTLE_TOL, EnvCfg, GripResult,
@@ -41,7 +41,7 @@ from sim_usd import (GRIP_MATERIAL, GRIP_MATERIAL_PATH,  # noqa: E402,F401
 from urdf_frames import (OPTICAL_TO_ROS_BODY, gripper_pin_anchors,  # noqa: E402,F401
                          matrix_to_quat, quat_to_matrix, urdf_tree)
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 _APP = None
 _HEADLESS = False

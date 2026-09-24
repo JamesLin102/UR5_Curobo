@@ -52,8 +52,8 @@ def log(msg):
 def run_mode(mapping):
     """Run the oracle episodes. Returns a list of failure strings."""
     import numpy as np
-    from pick_place_env import PickPlaceEnv, TaskCfg
-    from sim_env import EnvCfg
+    from pick_place.isaacsim_env import PickPlaceEnv, TaskCfg
+    from sim.sim_env import EnvCfg
 
     env = PickPlaceEnv(EnvCfg(mapping=mapping, verbose=False),
                        TaskCfg(max_legs=4), headless=True)

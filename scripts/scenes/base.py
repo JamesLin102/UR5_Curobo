@@ -9,8 +9,8 @@ Deliberately free of cuRobo and Isaac Sim imports -- Isaac Sim 5.1 pins Warp
 1.8.2 and cuRobo 0.8 needs Warp >= 1.13, so anything both processes import has
 to stay neutral. Standard library only.
 
-To add a scene, copy scenes/pick_place.py, edit it, and run both processes
-with ``--scene <module name>``.
+To add a scene, make an example package scripts/<name>/ with a scene.py
+(copy pick_place/scene.py), and run both processes with ``--scene <name>``.
 """
 
 from dataclasses import dataclass, field
@@ -67,7 +67,7 @@ class SceneSpec:
                               the pose by forward kinematics.
                       "pose"  fixed in world, [x,y,z,qw,qx,qy,qz], OPTICAL
                               frame (+Z along the view, +X right, +Y down).
-        mapper      TSDF/ESDF settings; see pick_place.py for what each one
+        mapper      TSDF/ESDF settings; see pick_place/scene.py for what each one
                     does and what it costs to get wrong. Optional key
                     "floor_z": nothing at or below that height is fused, so a
                     surface the planner already knows exactly (the table) is

@@ -2,9 +2,10 @@
 
     Isaac-{Task}-{Robot}-v0        e.g. Isaac-PickPlace-Ur5Robotiq-v0
 
-Adding a robot to rig.ROBOTS registers it for every task; adding a task is a
-module under lab/tasks/ plus one line in TASKS. The scene is not part of the
-id -- it is `cell.scene` in the env config, and defaults to scenes.DEFAULT.
+Adding a robot to rig.ROBOTS registers it for every task; adding a task is an
+example's lab_env.py (a CellEnv subclass, see lab/tasks/base.py) plus one line
+in TASKS. The scene is not part of the id -- it is `cell.scene` in the env
+config, and defaults to scenes.DEFAULT.
 
 Nothing here imports Isaac: the entry points are strings, and each robot's
 config is built by a factory that Isaac Lab calls (parse_env_cfg) only once
@@ -17,10 +18,11 @@ import gymnasium as gym
 
 from rig import ROBOTS
 
-# name -> (env class, env config class), as "module:attr".
+# name -> (env class, env config class), as "module:attr". Strings, so the
+# backend never imports an example; gymnasium imports it on make().
 TASKS = {
-    "PickPlace": ("lab.tasks.pick_place:PickPlaceEnv",
-                  "lab.tasks.pick_place:PickPlaceEnvCfg"),
+    "PickPlace": ("pick_place.lab_env:PickPlaceEnv",
+                  "pick_place.lab_env:PickPlaceEnvCfg"),
 }
 
 

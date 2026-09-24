@@ -5,8 +5,8 @@
     obs = cell.observe(env_ids)             # CellObs: arrays with an env axis
     view = cell.view(0)                     # one env as a cell_api.CellLike
 
-Primitives, not a task: what a leg IS lives in pick_place_task, what a step
-means lives in lab/tasks/. Every pose in or out is in the scene's own
+Primitives, not a task: what a leg IS lives in legs.py, what a step means
+lives in each example's lab_env.py. Every pose in or out is in the scene's own
 coordinates -- relative to the environment's origin -- so N cells look like N
 copies of the one the scene describes, and the planner, which knows nothing
 of environments, sees each of them exactly as it would on the Isaac Sim side.

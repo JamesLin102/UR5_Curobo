@@ -1,6 +1,6 @@
 """USD edits both simulator backends make to the imported robot.
 
-sim_env.py (Isaac Sim) and lab/ (Isaac Lab) import the same URDF through two
+sim/sim_env.py (Isaac Sim) and lab/ (Isaac Lab) import the same URDF through two
 different front ends, and then have to fix the same things on the stage: close
 the gripper's loop, recover frames the importer merged away, put the pad
 material on, give the meshes the colours the URDF says. Those fixes live here,

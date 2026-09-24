@@ -1,6 +1,6 @@
 # The Isaac Lab backend
 
-The same cell as `scripts/sim_env.py` — the same robot, scene, planner server and
+The same cell as `scripts/sim/sim_env.py` — the same robot, scene, planner server and
 demo loop — built on [Isaac Lab](https://github.com/isaac-sim/IsaacLab) and
 registered as a gymnasium task:
 
@@ -53,7 +53,7 @@ python scripts/planner_server.py                 # as before
 ```
 
 ```bash
-python scripts/lab/isaaclab_client.py --device cpu
+python scripts/pick_place/isaaclab_client.py --device cpu
 ```
 
 The flags are `isaacsim_client.py`'s (`--no-mapping`, `--no-overhead`,
@@ -75,7 +75,7 @@ python scripts/planner_servers.py --num 4
 ```
 
 ```bash
-python scripts/lab/isaaclab_client.py --device cpu --num_envs 4 --camera-class tiled
+python scripts/pick_place/isaaclab_client.py --device cpu --num_envs 4 --camera-class tiled
 ```
 
 Every cell shuttles its own block. One env step is one leg in every cell; the
@@ -215,11 +215,11 @@ Each of these was measured, not assumed:
 ```
 scripts/
   cell_api.py          the contract: EnvCfg, results, CellLike, ops, run_ops_blocking
-  pick_place_task.py   the task, simulator-free: legs as ops, Scorer (rewards, obs)
-  demo_loop.py         the demo loop, for any CellLike
+  legs.py              one grip as ops: above, down, grip, up
   sim_usd.py           USD fixes both backends make (4-bar pin, pads, URDF colours, frames, overlay)
   urdf_frames.py       frame arithmetic read off the URDF
   planner_servers.py   N planner_server.py processes on consecutive ports
+  scenes/              the SceneSpec contract, and the registry that finds each example's scene
   lab/
     robots.py          rig.ROBOTS[key] -> ArticulationCfg, any robot
     scene_cfg.py       SceneSpec -> assets under /World/envs/env_*, cameras by kind
@@ -229,13 +229,19 @@ scripts/
     markers.py         goal markers the depth cameras cannot see
     cell_cfg.py        CellCfg: every runtime knob
     app.py             the shared command line
-    isaaclab_client.py the demo
-    tasks/             __init__ (registry), base.py (CellEnv), pick_place.py
+    tasks/             __init__ (registry of every example's task), base.py (CellEnv)
+  sim/                 the Isaac Sim backend (sim_env.SimEnv), frozen
+  pick_place/          the example: scene, task (simulator-free), lab_env (the
+                       Isaac Lab task), isaaclab_client (the demo), demo_loop,
+                       and the Isaac Sim env and client
 ```
 
-Dependencies only point one way: `lab/` → the shared modules → `rig`, `scenes`.
-The shared modules import neither backend, and neither backend imports the other
-(`tools/check_lab_modularity.py`).
+Dependencies only point one way: an example → the backends → the shared
+modules. The shared modules import no backend and no example, neither backend
+imports the other or any example, and no example imports another. Inside an
+example, files named `lab_*` / `isaaclab_*` are the Isaac Lab side,
+`isaacsim_*` the Isaac Sim side, and everything else must be simulator-free
+(`tools/check_lab_modularity.py` checks all of it).
 
 ## Extending it
 
@@ -245,9 +251,9 @@ Everything plugs into the registries the Isaac Sim side already had:
 |---|---|---|
 | a robot | an entry in `rig.ROBOTS` (URDF, cuRobo config, joints, gains, drive type, gripper) | both backends; a gym id per task, `Isaac-{Task}-{Robot}-v0` |
 | a gripper mechanism | a handler in `sim_usd.LINKAGES`, named by the rig's `gripper.linkage` | both backends |
-| a scene | `scripts/scenes/<name>.py` defining a `SceneSpec` | both backends, the server, `--scene`; optional fields may be left out |
+| a scene | an example folder `scripts/<name>/` with a `scene.py` defining a `SceneSpec` | both backends, the server, `--scene <name>`; optional fields may be left out |
 | a camera kind | a builder in `lab/scene_cfg.CAMERA_BUILDERS` | every scene that uses the kind |
-| a task | `lab/tasks/<name>.py` with a `CellEnvCfg` / `CellEnv` subclass, and a line in `lab/tasks/TASKS` | the gym registry, for every robot |
+| a task | the example's `lab_env.py` with a `CellEnvCfg` / `CellEnv` subclass, and a line in `lab/tasks/TASKS` | the gym registry, for every robot |
 | a planner transport | a `PlannerPool` subclass in `lab/planner_pool.py`, chosen by `CellCfg.planner_mode` | the cell, unchanged |
 
 A task supplies `programs(actions)` (one list of `cell_api` ops per environment),

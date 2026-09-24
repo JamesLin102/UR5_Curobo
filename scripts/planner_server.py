@@ -645,7 +645,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--robot", default=DEFAULT_ROBOT, choices=sorted(ROBOTS))
     ap.add_argument("--scene", default=scenes.DEFAULT, choices=scenes.available(),
-                    help="scene module under scripts/scenes/")
+                    help="an example with a scene.py under scripts/")
     ap.add_argument("--no-mapping", action="store_true")
     ap.add_argument("--no-cuda-graph", action="store_true",
                     help="build the planner without CUDA graphs")

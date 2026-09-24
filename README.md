@@ -44,7 +44,7 @@ doing every motion in between. It also runs on **Isaac Lab**, as a registered
 
 It runs as **two processes, by design**: Isaac Sim 5.1 needs Warp 1.8.2,
 cuRobo 0.8 needs Warp ≥ 1.13, and no version satisfies both. cuRobo lives in
-`planner_server.py`, Isaac Sim in `isaacsim_client.py`, and they talk over a
+`planner_server.py`, Isaac Sim in the demo client, and they talk over a
 local socket.
 
 ## Install
@@ -105,7 +105,7 @@ python scripts/planner_server.py
 ```
 
 ```bash
-python scripts/isaacsim_client.py
+python scripts/pick_place/isaacsim_client.py
 ```
 
 The arm scans the cell, then carries the block back and forth. Drag the slab
@@ -119,13 +119,13 @@ Ctrl-C (`ss -ltnp | grep 5599` shows a stale one).
 | `--no-overhead` | client | wrist camera alone |
 | `--headless` | client | no window; renders only if the cameras need it |
 | `--static` | client | hold at HOME and just look through the cameras |
-| `--scene NAME` | both | another scene under `scripts/scenes/`; must match |
+| `--scene NAME` | both | another example's scene (`scripts/NAME/scene.py`); must match |
 | `--allow-curobo-drift` | server | start on a cuRobo other than the pinned commit |
 
 ## Use it from code
 
 ```python
-import sim_env                              # scripts/ on sys.path
+from sim import sim_env                     # scripts/ on sys.path
 sim_env.launch(headless=True)               # before anything else from Isaac Sim
 env = sim_env.SimEnv(sim_env.EnvCfg(mapping=False))
 env.reset(sim_env.ResetOptions(block_on=0))
@@ -139,7 +139,7 @@ As a gymnasium environment, one step is one pick or place, and the action is
 where the gripper acts:
 
 ```python
-from pick_place_env import PickPlaceEnv
+from pick_place.isaacsim_env import PickPlaceEnv
 env = PickPlaceEnv(headless=True)
 obs, info = env.reset(seed=0)
 obs, reward, terminated, truncated, info = env.step([x, y, z, yaw])
@@ -160,7 +160,7 @@ and planner server.
 
 ```bash
 python scripts/planner_server.py                      # as before
-python scripts/lab/isaaclab_client.py --device cpu    # the demo, on Isaac Lab
+python scripts/pick_place/isaaclab_client.py --device cpu    # the demo, on Isaac Lab
 python tools/check_pick_place_lab.py --device cpu --both-backends   # A/B, headless
 ```
 
@@ -168,7 +168,7 @@ Four cells at once (one planner server each):
 
 ```bash
 python scripts/planner_servers.py --num 4
-python scripts/lab/isaaclab_client.py --device cpu --num_envs 4 --camera-class tiled
+python scripts/pick_place/isaaclab_client.py --device cpu --num_envs 4 --camera-class tiled
 ```
 
 It needs Isaac Lab installed from source into the same environment. Install
@@ -180,27 +180,39 @@ robots, scenes and tasks, and how far it scales are in
 
 ```
 scripts/
+  ── shared, whatever the example ──
   planner_server.py     cuRobo: planning + live mapping, on a local socket
   planner_servers.py    N of them on consecutive ports, one per Isaac Lab cell
   planner_client.py     its client; needs neither Isaac Sim nor cuRobo
-  sim_env.py            Isaac Sim side as a library: SimEnv
-  isaacsim_client.py    the demo
-  pick_place_env.py     PickPlaceEnv (gymnasium)
-  lab/                  the Isaac Lab backend: robots, scene, cell, gym tasks
   cell_api.py           what every backend offers: config, results, primitives
-  pick_place_task.py    the task itself: legs, rewards, observations
-  demo_loop.py          the demo loop, for either backend
+  legs.py               one grip as ops: above, down, grip, up
   sim_usd.py, urdf_frames.py   USD and URDF helpers both backends use
   rig.py                robots (arm + gripper settings), timing, port, cuRobo pin
-  scenes/               base.py = the scene contract, pick_place.py = the scene
+  scenes/               the scene contract (base.py) and registry
+
+  ── backends ──
+  lab/                  Isaac Lab: robots, scene, cell, CellEnv, the task registry
+  sim/                  Isaac Sim, as a library: SimEnv (frozen, the A/B reference)
+
+  ── examples, one folder each ──
+  pick_place/
+    scene.py            the scene
+    task.py             the task itself: rewards, observations; no simulator
+    lab_env.py          Isaac-PickPlace-*-v0, on Isaac Lab
+    isaaclab_client.py  the demo, on Isaac Lab
+    isaacsim_env.py     PickPlaceEnv (gymnasium), on Isaac Sim
+    isaacsim_client.py  the demo, on Isaac Sim
+    demo_loop.py        the demo loop, for either backend
 configs/                cuRobo robot config (generated)
 assets/robot/           the robot description, one folder per device
 tools/                  checks, a collision-sphere viewer, model builders
 ```
 
-A new scene is a copy of `scripts/scenes/pick_place.py`; a new robot is an
-entry in `rig.ROBOTS` plus its URDF and cuRobo config. Both backends pick either
-up without changes; docs/isaaclab.md lists the rest of the extension points.
+A new scene is a new example folder with a `scene.py` (copy
+`scripts/pick_place/scene.py`); a new robot is an entry in `rig.ROBOTS` plus its
+URDF and cuRobo config. Both backends pick either up without changes;
+docs/isaaclab.md lists the rest of the extension points.
+`tools/check_lab_modularity.py` checks who may import whom.
 
 ## Limitations
 
@@ -218,8 +230,8 @@ up without changes; docs/isaaclab.md lists the rest of the extension points.
 - Why each setting is what it is — drive gains, mapper settings, the scene's
   layout, the upstream cuRobo bugs worked around — is written next to the
   setting, with the measurement behind it: `scripts/rig.py`,
-  `scripts/scenes/pick_place.py`, `scripts/planner_server.py`,
-  `scripts/sim_env.py`.
+  `scripts/pick_place/scene.py`, `scripts/planner_server.py`,
+  `scripts/sim/sim_env.py`.
 - [assets/robot/ur5_robotiq/PROVENANCE.md](assets/robot/ur5_robotiq/PROVENANCE.md)
   — where the robot description comes from. It is vendored from
   [eugene900805/mir_ur5_humble](https://github.com/eugene900805/mir_ur5_humble)

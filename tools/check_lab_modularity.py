@@ -6,17 +6,29 @@
 Three things, each guarding a promise the layout makes:
 
   imports     who may import whom, read off the source (ast), so a shortcut
-              taken today fails here rather than months later:
-                shared layer  (cell_api, urdf_frames, sim_usd, pick_place_task,
-                               demo_loop, rig, proto, planner_client, scenes/)
-                              imports neither backend, nor cuRobo
-                lab/          imports neither the Isaac Sim backend nor cuRobo
-                Isaac Sim     (sim_env, isaacsim_client, pick_place_env)
-                              imports neither lab/ nor Isaac Lab nor cuRobo
-                planner_server imports no simulator at all
-  registry    every task is registered for every robot in rig.ROBOTS
+              taken today fails here rather than months later. The layout:
+
+                scripts/*.py, scenes/   shared: no backend, no example, no
+                                        Isaac Lab, no cuRobo (planner_server.py
+                                        alone has cuRobo, and no simulator)
+                lab/                    Isaac Lab backend: no sim/, no example,
+                                        no cuRobo
+                sim/                    Isaac Sim backend (frozen): no lab/, no
+                                        Isaac Lab, no example, no cuRobo
+                <example>/              one package per example; never another
+                                        example, never cuRobo. By file name:
+                                          lab_*, isaaclab_*   Isaac Lab side
+                                          isaacsim_*          Isaac Sim side
+                                          anything else       simulator-free,
+                                            because the planner server (scene.py)
+                                            or the real robot may import it
+
+              Examples point at backends and the shared layer, backends point
+              at the shared layer, and nothing points back.
+  registry    every task is registered for every robot in rig.ROBOTS, and its
+              entry points name a module and class that exist
   builders    the cell builds, steps and observes, with no planner, for every
-              scene under scenes/ AND for a bare scene with only the required
+              example's scene AND for a bare scene with only the required
               SceneSpec fields -- no payload, no unmapped body, no camera --
               so nothing in lab/ quietly assumes pick_place's contents
 
@@ -29,7 +41,6 @@ import glob
 import os
 import subprocess
 import sys
-import types
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS = os.path.join(ROOT, "scripts")
@@ -48,17 +59,50 @@ def report(ok, what):
 
 # --- imports -------------------------------------------------------------------
 
-SHARED = ["cell_api", "urdf_frames", "sim_usd", "pick_place_task", "demo_loop", "rig",
-          "proto", "planner_client"]
-ISAAC_SIM = ["sim_env", "isaacsim_client", "pick_place_env"]
-RULES = [
-    # (files, forbidden top-level modules)
-    ([f"{m}.py" for m in SHARED] + ["scenes/*.py"],
-     {"lab", "curobo", "isaaclab", "isaaclab_tasks"} | set(ISAAC_SIM)),
-    (["lab/*.py", "lab/tasks/*.py"], {"curobo"} | set(ISAAC_SIM)),
-    ([f"{m}.py" for m in ISAAC_SIM], {"lab", "curobo", "isaaclab", "isaaclab_tasks"}),
-    (["planner_server.py"], {"isaacsim", "isaaclab", "omni", "pxr", "lab"} | set(ISAAC_SIM)),
-]
+BACKENDS = {"lab", "sim"}
+NOT_EXAMPLES = BACKENDS | {"scenes", "__pycache__"}
+ISAAC_LAB = {"isaaclab", "isaaclab_tasks", "isaaclab_rl"}
+SIMULATORS = ISAAC_LAB | {"isaacsim", "omni", "pxr", "carb"}
+
+
+def examples():
+    """Every example package under scripts/."""
+    return sorted(d for d in os.listdir(SCRIPTS)
+                  if d not in NOT_EXAMPLES
+                  and os.path.isfile(os.path.join(SCRIPTS, d, "__init__.py")))
+
+
+def example_rules(name):
+    """What the files of one example may not import, by which side they are on."""
+    others = set(examples()) - {name}
+    never = others | {"curobo"}
+    for path in sorted(glob.glob(os.path.join(SCRIPTS, name, "*.py"))):
+        base = os.path.basename(path)
+        if base.startswith(("lab_", "isaaclab_")):
+            yield path, never | {"sim"}
+        elif base.startswith("isaacsim_"):
+            yield path, never | {"lab"} | ISAAC_LAB
+        else:
+            yield path, never | BACKENDS | SIMULATORS
+
+
+def rules():
+    """(file path, forbidden top-level modules) for every file under scripts/."""
+    ex = set(examples())
+    shared = ex | BACKENDS | ISAAC_LAB | {"curobo"}
+    for path in sorted(glob.glob(os.path.join(SCRIPTS, "*.py"))):
+        if os.path.basename(path) == "planner_server.py":
+            yield path, (shared - {"curobo"}) | SIMULATORS
+        else:
+            yield path, shared
+    for path in sorted(glob.glob(os.path.join(SCRIPTS, "scenes", "*.py"))):
+        yield path, shared
+    for path in sorted(glob.glob(os.path.join(SCRIPTS, "lab", "**", "*.py"), recursive=True)):
+        yield path, ex | {"sim", "curobo"}
+    for path in sorted(glob.glob(os.path.join(SCRIPTS, "sim", "**", "*.py"), recursive=True)):
+        yield path, ex | {"lab", "curobo"} | ISAAC_LAB
+    for name in sorted(ex):
+        yield from example_rules(name)
 
 
 def imported(path):
@@ -74,12 +118,22 @@ def imported(path):
 
 
 def check_imports():
-    for patterns, forbidden in RULES:
-        for pattern in patterns:
-            for path in sorted(glob.glob(os.path.join(SCRIPTS, pattern))):
-                bad = imported(path) & forbidden
-                rel = os.path.relpath(path, ROOT)
-                report(not bad, f"{rel} imports {sorted(bad) if bad else 'nothing it must not'}")
+    for path, forbidden in rules():
+        bad = imported(path) & forbidden
+        rel = os.path.relpath(path, ROOT)
+        report(not bad, f"{rel} imports {sorted(bad) if bad else 'nothing it must not'}")
+
+
+def defines(module, attr):
+    """Does scripts/<module as a path>.py define `attr` at top level? Read, not imported."""
+    path = os.path.join(SCRIPTS, *module.split(".")) + ".py"
+    if not os.path.isfile(path):
+        return False
+    tree = ast.parse(open(path).read(), path)
+    return any(isinstance(n, (ast.ClassDef, ast.FunctionDef)) and n.name == attr
+               or isinstance(n, ast.Assign) and any(getattr(t, "id", None) == attr
+                                                    for t in n.targets)
+               for n in tree.body)
 
 
 def check_registry():
@@ -92,6 +146,9 @@ def check_registry():
     have = {i for i in gym.registry if i in want}
     for tid in sorted(want):
         report(tid in have, f"registered {tid}")
+    for task, entries in sorted(tasks.TASKS.items()):
+        for entry in entries:
+            report(defines(*entry.split(":")), f"{task}: {entry} exists")
 
 
 # --- builders (one child process per scene) ------------------------------------
@@ -114,9 +171,7 @@ def child(scene_name):
 
     import scenes
     if scene_name == BARE:
-        mod = types.ModuleType(f"scenes.{BARE}")
-        mod.SCENE = bare_scene()
-        sys.modules[mod.__name__] = mod
+        scenes.register(BARE, bare_scene())
     spec = scenes.load(scene_name)
     AppLauncher(dict(headless=True, enable_cameras=bool(spec.cameras)))
 
