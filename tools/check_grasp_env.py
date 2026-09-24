@@ -46,6 +46,8 @@ ap.add_argument("--min-success", type=float, default=0.8)
 ap.add_argument("--policy", choices=("oracle", "random"), default="oracle",
                 help="random: exercise every failure path (no success bar)")
 ap.add_argument("--seed", type=int, default=0)
+ap.add_argument("--one-grip-fraction", type=float, default=None,
+                help="share of episodes from layouts with one working grip (TaskCfg)")
 AppLauncher.add_app_launcher_args(ap)
 ARGS = ap.parse_args()
 ARGS.headless = True
@@ -107,6 +109,8 @@ def main():
     cfg.cell.num_servers = ARGS.num_servers
     cfg.task.bank = ARGS.bank
     cfg.task.noise = not ARGS.no_noise
+    if ARGS.one_grip_fraction is not None:
+        cfg.task.one_grip_fraction = ARGS.one_grip_fraction
     cfg.seed = ARGS.seed
     t0 = time.time()
     env = gym.make(tid, cfg=cfg)

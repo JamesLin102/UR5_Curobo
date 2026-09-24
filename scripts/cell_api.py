@@ -142,6 +142,7 @@ class MoveTo:
     fail_idle: int = 0
     fatal: bool = True
     label: str = ""
+    from_plan_end: bool = False     # as MoveJ.from_plan_end
 
 
 @dataclass
@@ -154,8 +155,10 @@ class MoveZ:
     label: str = ""
     # Ask the planner to collision-check the straight move before it is made
     # (the joint blend, against the bodies it knows of). A refused check fails
-    # the op like a missing IK does, with the planner's reason.
-    check: bool = False
+    # the op like a missing IK does, with the planner's reason. True holds a
+    # fixed margin; "escape" only forbids coming closer than it starts, for
+    # moving away from something it is already near.
+    check: object = False
 
 
 @dataclass

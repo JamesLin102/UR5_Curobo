@@ -33,7 +33,7 @@ import torch
 
 from isaaclab.utils import configclass
 
-from cell_api import Grip, Idle, MoveJ, ResetOptions, Retrace
+from cell_api import Grip, Idle, MoveJ, MoveTo, MoveZ, ResetOptions, Retrace
 from lab.tasks.base import CellEnv, CellEnvCfg
 from legs import leg_ops, tool_pose
 
@@ -85,6 +85,7 @@ class GraspEnv(CellEnv):
         self._term = torch.zeros(n, dtype=torch.bool, device=self.device)
         self._trunc = torch.zeros(n, dtype=torch.bool, device=self.device)
         self.stuck = 0                 # returns home that had to be teleports
+        self.home_tool = None          # the tool pose at HOME, from the first reset
         self.stuck_why = []
 
     @property
@@ -113,6 +114,8 @@ class GraspEnv(CellEnv):
         if self.training_mode:
             self.pool.set_world(env_ids, bodies)
         o = self.cell.reset(env_ids, opts)
+        if self.home_tool is None:
+            self.home_tool = [float(v) for v in o.tool_pose[0]]     # the arm is at HOME
         for k, e in enumerate(env_ids):
             self.est[e] = self._perceive(e, o.objects[self.cube_name][k])
         self.attempt[env_ids] = 0
@@ -227,6 +230,24 @@ class GraspEnv(CellEnv):
             ops.append(MoveJ(list(G.HOME), from_plan_end=back))
             programs.append(ops)
         results = self.cell.run(env_ids, programs)
+        # cuRobo's joint-space planner gives up among the cylinders where its
+        # pose planner does not, so the fallbacks, from the pre-grasp: plan to
+        # HOME's tool pose and finish in joint space; then straight up clear of
+        # the cylinders' tops (checked) and home. Each measured to be needed:
+        # random policy, 1 in ~140 attempts each.
+        rise = G.TABLE_TOP + G.CYL_HEIGHT + 0.05 - (G.GRASP_Z + G.DESCEND)
+        for fallback in (
+                lambda: [MoveTo(list(self.home_tool), why="no plan to HOME's pose",
+                                from_plan_end=True), MoveJ(list(G.HOME))],
+                lambda: [MoveZ(rise, why="no way up over the cylinders", check="escape"),
+                         MoveJ(list(G.HOME))]):
+            again = [e for e, r in zip(env_ids, results)
+                     if not r.ok and self.cell.plan_end[e] is not None
+                     and self.cell.goal[e] is not None and self.home_tool is not None]
+            if not again:
+                break
+            fixed = dict(zip(again, self.cell.run(again, [fallback() for _ in again])))
+            results = [fixed.get(e, r) for e, r in zip(env_ids, results)]
         stuck = [e for e, r in zip(env_ids, results) if not r.ok]
         for e, r in zip(env_ids, results):
             if not r.ok:

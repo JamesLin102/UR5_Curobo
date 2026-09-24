@@ -96,6 +96,7 @@ class LabCell:
         self.steps = 0
         self.goal = [None] * self.num_envs       # last commanded tool pose, env-local
         self.plan_end = [None] * self.num_envs   # joints where the last MoveTo ended (Retrace)
+        self.plan_goal = [None] * self.num_envs  # ...and the tool pose it was sent to
         self.closed = np.zeros(self.num_envs, dtype=bool)
         self._arm_cmd = np.zeros((self.num_envs, len(self.arm_idx)))
         self._grip_cmd = np.zeros((self.num_envs, len(self.grip_idx_all)))
@@ -318,6 +319,7 @@ class LabCell:
             self.command_gripper(e, self.grip_open)
             self.goal[e] = None
             self.plan_end[e] = None
+            self.plan_goal[e] = None
             self.closed[e] = False
         self._refresh()
 

@@ -109,10 +109,13 @@ class Planner:
 
         check: also collision-check the joint blend from q to the answer (the
         straight move the cell will make) against `world`'s bodies and the
-        static obstacles; a move that fails comes back as None.
+        static obstacles; a move that fails comes back as None. "escape":
+        judged by where it starts -- no closer than that, never touching --
+        for getting away from something the arm is already near.
         """
         send_msg(self.sock, {"op": "ik", "q": list(map(float, q)), "target": target,
-                             "world": world, "check": bool(check)})
+                             "world": world,
+                             "check": check if check == "escape" else bool(check)})
         header, payload = recv_msg(self.sock)
         if not header.get("ok"):
             return None, header.get("status", "no IK")

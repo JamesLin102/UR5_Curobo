@@ -667,7 +667,7 @@ def handle_ik(approach_ik, kin, tool_frame, header, path_check=None, bodies=()):
         return {"ok": False, "status": "ik failed"}, b""
     sol = res.solution[res.success].view(-1, len(kin.joint_names))[0]
     if header.get("check") and path_check is not None:
-        ok, why = path_check(q[0], sol, bodies)
+        ok, why = path_check(q[0], sol, bodies, escape=header.get("check") == "escape")
         if not ok:
             return {"ok": False, "status": why}, b""
     return ({"ok": True, "joint_names": list(kin.joint_names)},
@@ -786,7 +786,23 @@ class PathCheck:
         q = torch.stack([radial, axial], dim=-1)
         return q.clamp(min=0).norm(dim=-1) + q.max(dim=-1).values.clamp(max=0) - r
 
-    def __call__(self, q0, q1, bodies):
+    # An ESCAPE (check "escape") is judged by where it starts, not by MARGIN:
+    # the arm may be closer than MARGIN already -- the planner puts a
+    # pre-grasp wherever its own margin allows -- and a rule that forbids
+    # every move from there leaves it stuck (a pre-grasp 11 mm from a
+    # cylinder: the way down refused, and with it the way up and both plans
+    # home). An escape may come no more than SLACK closer than it started --
+    # a joint blend straight up from beside a cylinder dips ~1 mm towards it
+    # first -- and never within TOUCH of it.
+    TOUCH = 0.002
+    SLACK = 0.003
+
+    def _limit(self, d, escape):
+        if not escape:
+            return self.MARGIN
+        return max(min(self.MARGIN, float(d[0].min()) - self.SLACK), self.TOUCH)
+
+    def __call__(self, q0, q1, bodies, escape=False):
         t = torch.linspace(0.0, 1.0, self.SAMPLES, device=q0.device).unsqueeze(1)
         qs = (1 - t) * q0.unsqueeze(0) + t * q1.unsqueeze(0)
         js = JointState.from_position(qs, joint_names=self.kin.joint_names)
@@ -798,14 +814,14 @@ class PathCheck:
             fn = self._cylinder if shape == "cylinder" else self._box
             d = torch.where(live, fn(c, r, dims, pose), torch.full_like(r, 1e9))
             worst = float(d.min())
-            if worst < self.MARGIN:
+            if worst < self._limit(d, escape):
                 return False, f"straight move would pass {1000 * worst:+.0f} mm from {name}"
         arm = live.clone()
         arm[:, self.fingers] = False
         for name, dims, pose, _ in self.scene.obstacles:
             d = torch.where(arm, self._box(c, r, dims, pose), torch.full_like(r, 1e9))
             worst = float(d.min())
-            if worst < self.MARGIN:
+            if worst < self._limit(d, escape):
                 return False, f"straight move would put the arm {1000 * worst:+.0f} mm into {name}"
         return True, None
 

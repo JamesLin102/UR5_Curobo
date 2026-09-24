@@ -63,7 +63,8 @@ class _MoveTo(_Run):
     """Plan from where the arm is, then play one waypoint per tick, fusing as it goes."""
 
     def request(self):
-        return ("plan", list(self.op.pose))
+        start = self.cell.plan_end[self.env] if self.op.from_plan_end else None
+        return ("plan", list(self.op.pose), start)
 
     def start(self, reply):
         if not reply.get("ok"):
@@ -81,6 +82,7 @@ class _MoveTo(_Run):
         if self.k == len(self.traj):
             self.cell.goal[self.env] = list(self.op.pose)
             self.cell.plan_end[self.env] = np.asarray(self.traj[-1], dtype=np.float64)
+            self.cell.plan_goal[self.env] = list(self.op.pose)
             self.finish(MoveResult(ok=True, solve_ms=self.reply["solve_ms"],
                                    waypoints=len(self.traj),
                                    clearance=self.reply.get("clearance"),
@@ -126,6 +128,9 @@ class _Retrace(_Run):
     def after(self):
         self.i += 1
         if self.i == self.op.n_steps:
+            # Back where the planned move put the tool: a MoveZ from here goes
+            # straight from that pose.
+            self.cell.goal[self.env] = self.cell.plan_goal[self.env]
             self.finish(MoveResult(ok=True, sim_steps=self.cell.steps - self.t0))
 
 
@@ -138,7 +143,7 @@ class _MoveZ(_Run):
             return None
         self.target = list(goal)
         self.target[2] += self.op.dz
-        return ("ik", self.target, bool(self.op.check))
+        return ("ik", self.target, self.op.check if self.op.check == "escape" else bool(self.op.check))
 
     def start(self, reply):
         if self.cell.goal[self.env] is None:
@@ -360,8 +365,9 @@ class ProgramRunner:
                 continue
             envs = [e for e, _ in asks[kind]]
             # A request may name where to plan from (MoveJ.from_plan_end).
-            q = np.stack([a[1] if kind == "plan_joint" and len(a) > 1 and a[1] is not None
-                          else self.cell.q_now(e) for e, a in asks[kind]])
+            q = np.stack([a[1] if kind in ("plan", "plan_joint") and len(a) > 1
+                          and a[1] is not None else self.cell.q_now(e)
+                          for e, a in asks[kind]])
             targets = np.asarray([a[0] for _, a in asks[kind]], dtype=np.float64)
             if kind == "plan":
                 got = pool.plan(envs, q, targets)
