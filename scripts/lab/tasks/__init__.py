@@ -23,6 +23,8 @@ from rig import ROBOTS
 TASKS = {
     "PickPlace": ("pick_place.lab_env:PickPlaceEnv",
                   "pick_place.lab_env:PickPlaceEnvCfg"),
+    "Grasp": ("grasp.lab_env:GraspEnv",
+              "grasp.lab_env:GraspEnvCfg"),
 }
 
 

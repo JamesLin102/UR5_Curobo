@@ -5,7 +5,8 @@
 
 The physics half of the question tools/grasp_reach.py answers kinematically.
 One command: it starts its own planner server (--scene grasp --no-mapping),
-builds the grasp scene on Isaac Lab with the cylinders taken off the table,
+builds the grasp scene on Isaac Lab with the cylinders taken off the table
+(tools/check_grasp_env.py is the check with them, through the gym env),
 and for each trial puts the cube somewhere in CUBE_XY at a random yaw and
 runs the grip an oracle would -- legs.leg_ops, tool square to the cube's faces:
 plan to above it, straight down, close, lift.
@@ -100,11 +101,8 @@ def put(cell, name, pose):
 
 
 def clear_table(cell):
-    """The cylinders are visual-only here; out of the way, so nothing else is in view."""
-    for name, view in cell.bodies.items():
-        view.set_world_poses(
-            positions=torch.tensor([list(cell.origins[0] + [0.0, 0.0, -1.0])],
-                                   dtype=torch.float32, device=cell.device), indices=[0])
+    """The cylinders out of the cell: this is the empty-table check."""
+    cell.place_bodies([0], [{name: None for name, *_ in G.CYLINDERS}])
 
 
 def main():

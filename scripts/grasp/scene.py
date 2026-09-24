@@ -272,6 +272,9 @@ SCENE = SceneSpec(
     payload=[CUBE],
     unmapped=CYLINDERS,
     shapes={name: "cylinder" for name, *_ in CYLINDERS},
+    # Real colliders in the simulator, kinematic: the arm is stopped by them
+    # and the touch is reported, as it would be by a real tube it knocked.
+    solid=[name for name, *_ in CYLINDERS],
     pick={"descend_m": DESCEND, "lift_m": 0.15},
     planner_joint_limits=PLANNER_JOINT_LIMITS,
     keep_out=KEEP_OUT,

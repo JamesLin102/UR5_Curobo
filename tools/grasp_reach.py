@@ -216,7 +216,13 @@ def grid(arm):
     return why
 
 
-def sample_layout(rng, n_cyl):
+def sample_layout(rng, n_cyl, near_p=0.0, near_gap=(0.015, 0.12)):
+    """The cube, and up to n_cyl cylinders that keep MIN_GAP from it and each other.
+
+    near_p: the chance each cylinder is put near the cube -- its surface
+    near_gap from the cube's, in a random direction -- rather than anywhere in
+    CYL_XY. Uniform placement mostly leaves the cube in the open.
+    """
     x = rng.uniform(*G.CUBE_XY[0])
     y = rng.uniform(*G.CUBE_XY[1])
     yaw = rng.uniform(-math.pi / 4, math.pi / 4)
@@ -227,7 +233,15 @@ def sample_layout(rng, n_cyl):
     for _ in range(200):
         if len(cyl) == n_cyl:
             break
-        c = np.array([rng.uniform(*G.CYL_XY[0]), rng.uniform(*G.CYL_XY[1])])
+        if rng.random() < near_p:
+            ang = rng.uniform(-math.pi, math.pi)
+            d = G.CUBE_SIZE / 2 + G.CYL_RADIUS + rng.uniform(*near_gap)
+            c = np.array([x + d * math.cos(ang), y + d * math.sin(ang)])
+            if not (G.CYL_XY[0][0] <= c[0] <= G.CYL_XY[0][1]
+                    and G.CYL_XY[1][0] <= c[1] <= G.CYL_XY[1][1]):
+                continue
+        else:
+            c = np.array([rng.uniform(*G.CYL_XY[0]), rng.uniform(*G.CYL_XY[1])])
         # Distance from the cylinder's axis to the cube's square, exactly.
         local = (c - [x, y]) @ R
         q = np.abs(local) - G.CUBE_SIZE / 2

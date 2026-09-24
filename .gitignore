@@ -8,3 +8,6 @@ __pycache__/
 
 # planner_server.py writes these: the URDF with scene-narrowed joint limits.
 .planner_limits_*.urdf
+
+# Training runs: checkpoints and tensorboard (scripts/grasp/isaaclab_train.py).
+logs/
