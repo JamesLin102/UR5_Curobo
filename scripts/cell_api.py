@@ -143,6 +143,12 @@ class MoveTo:
     fatal: bool = True
     label: str = ""
     from_plan_end: bool = False     # as MoveJ.from_plan_end
+    # Straight moves to solve with the plan, as (dz, check) from the pose
+    # reached: the MoveZ ops that follow it then need no request of their own.
+    # Each request stalls every environment's tick, and the MoveZs of N
+    # environments come at N different ticks; asked with the plan they come
+    # at one, all servers answering together.
+    then: Sequence = ()
 
 
 @dataclass

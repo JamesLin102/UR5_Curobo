@@ -20,6 +20,9 @@ An op that takes no simulation time (a refused plan, an Idle(0)) finishes
 without a tick, as its blocking counterpart returns without a step.
 """
 
+import time
+from collections import defaultdict
+
 import numpy as np
 
 from cell_api import (GRIP_EXTRA_STEPS, SCAN_BLEND_STEPS, SCAN_STEPS, SETTLE_MAX_STEPS,
@@ -64,7 +67,7 @@ class _MoveTo(_Run):
 
     def request(self):
         start = self.cell.plan_end[self.env] if self.op.from_plan_end else None
-        return ("plan", list(self.op.pose), start)
+        return ("plan", list(self.op.pose), start, list(self.op.then))
 
     def start(self, reply):
         if not reply.get("ok"):
@@ -83,6 +86,14 @@ class _MoveTo(_Run):
             self.cell.goal[self.env] = list(self.op.pose)
             self.cell.plan_end[self.env] = np.asarray(self.traj[-1], dtype=np.float64)
             self.cell.plan_goal[self.env] = list(self.op.pose)
+            # The straight moves solved with the plan, for the MoveZs next.
+            pre, target = [], list(self.op.pose)
+            for (dz, check), got in zip(self.op.then, self.reply.get("then") or []):
+                target = list(target)
+                target[2] += dz
+                pre.append((dz, check, target, got.get("q") if got.get("ok") else None,
+                            got.get("status")))
+            self.cell.presolved[self.env] = pre
             self.finish(MoveResult(ok=True, solve_ms=self.reply["solve_ms"],
                                    waypoints=len(self.traj),
                                    clearance=self.reply.get("clearance"),
@@ -143,12 +154,25 @@ class _MoveZ(_Run):
             return None
         self.target = list(goal)
         self.target[2] += self.op.dz
+        # Solved with the plan already? (MoveTo.then) Then no request.
+        self.presolved = None
+        queue = self.cell.presolved[self.env]
+        if queue:
+            dz, check, target, q, why = queue[0]
+            if abs(dz - self.op.dz) < 1e-9 and check == self.op.check \
+                    and np.allclose(target, self.target, atol=1e-9):
+                self.presolved = (q, why)
+                queue.pop(0)
+                return None
+        self.cell.presolved[self.env] = []
         return ("ik", self.target, self.op.check if self.op.check == "escape" else bool(self.op.check))
 
     def start(self, reply):
         if self.cell.goal[self.env] is None:
             self.finish(MoveResult(ok=False, reason="no goal yet: move_to first"))
             return
+        if getattr(self, "presolved", None) is not None:
+            reply = self.presolved
         joints, why = reply if isinstance(reply, tuple) else (reply, None)
         if joints is None:
             self.cell.log(f"  no IK for z{self.op.dz:+.3f} m ({why or 'no IK'}); skipping",
@@ -307,6 +331,11 @@ class _Program:
 class ProgramRunner:
     def __init__(self, cell):
         self.cell = cell
+        # Where run() spends its time, in seconds, cumulative: "planner" (the
+        # replies waited for), "physics" (cell.tick), "ops" (every env's op,
+        # before and after each tick), "ticks" (a count). For finding what to
+        # make faster; reset it by assigning a new defaultdict.
+        self.profile = defaultdict(float)
 
     def run(self, env_ids, programs):
         """Run programs[k] in env_ids[k], all together. One ProgramResult each."""
@@ -320,14 +349,21 @@ class ProgramRunner:
                 for p in live:
                     self._abort(p)
                 break
+            prof, t0 = self.profile, time.perf_counter()
             for p in live:
                 p.run.command()
+            t1 = time.perf_counter()
             self.cell.tick()
+            t2 = time.perf_counter()
             for p in live:
                 p.run.after()
                 if p.run.done:
                     p.finish_op(p.run.op, p.record, p.run.result)
                     p.run = None
+            t3 = time.perf_counter()
+            prof["ops"] += (t1 - t0) + (t3 - t2)
+            prof["physics"] += t2 - t1
+            prof["ticks"] += 1
         return [p.result for p in progs]
 
     def _start_ops(self, progs):
@@ -346,7 +382,9 @@ class ProgramRunner:
                 starting.append(p)
             if not starting:
                 return
+            t0 = time.perf_counter()
             replies = self._ask(starting)
+            self.profile["planner"] += time.perf_counter() - t0
             for p in starting:
                 p.run.start(replies.get(p.env))
                 if p.run.done:
@@ -371,7 +409,7 @@ class ProgramRunner:
                           for e, a in asks[kind]])
             targets = np.asarray([a[0] for _, a in asks[kind]], dtype=np.float64)
             if kind == "plan":
-                got = pool.plan(envs, q, targets)
+                got = pool.plan(envs, q, targets, [a[2] if len(a) > 2 else () for _, a in asks[kind]])
             elif kind == "plan_joint":
                 got = pool.plan_joint(envs, q, targets)
             else:

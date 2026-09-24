@@ -85,14 +85,18 @@ class Planner:
             )
         return header
 
-    def plan(self, q, target, world=None):
+    def plan(self, q, target, world=None, then=(), exclude=None):
         """Header dict; with "traj" (n x dof float32) added when "ok".
 
         `world`: plan in that environment's world (set_world), not whatever
-        the server has loaded.
+        the server has loaded. `then`: [(dz, check)] straight moves to solve
+        from the pose reached, each as ik_checked would; the reply's "then"
+        holds {"ok", "q"} or {"ok": False, "status"} for each, up to the first
+        that fails.
         """
         return self._traj({"op": "plan", "q": list(map(float, q)), "target": target,
-                           "world": world})
+                           "world": world, "exclude": exclude,
+                           "then": [[float(dz), c if c == "escape" else bool(c)] for dz, c in then]})
 
     def plan_joint(self, q, goal, world=None):
         """As plan(), to a joint configuration in the planner's joint order."""
@@ -123,13 +127,36 @@ class Planner:
             return None, header.get("status", "no IK")
         return np.frombuffer(payload, dtype=np.float32).tolist(), None
 
-    def set_world(self, key, bodies):
+    def plan_batch(self, requests):
+        """Plans for many environments at once, on a server started with --batch.
+
+        requests: [{"slot", "q", "target", "then"}]; each environment in the
+        slot its world was set into (set_world(slot=)). Returns one header
+        per request, as plan() does, with "traj" when "ok".
+        """
+        send_msg(self.sock, {"op": "plan_batch", "requests": [
+            {"slot": int(r["slot"]), "q": list(map(float, r["q"])),
+             "target": list(map(float, r["target"])),
+             "then": [[float(dz), c if c == "escape" else bool(c)] for dz, c in r.get("then", ())]}
+            for r in requests]})
+        header, payload = recv_msg(self.sock)
+        if not header.get("ok"):
+            raise RuntimeError(f"planner refused the batch: {header.get('status')}")
+        out, at = [], 0
+        for h, size in zip(header["replies"], header["sizes"]):
+            if h.get("ok"):
+                h["traj"] = np.frombuffer(payload[at:at + size], dtype=np.float32).reshape(h["n"], h["dof"])
+            at += size
+            out.append(h)
+        return out
+
+    def set_world(self, key, bodies, slot=None):
         """Tell a --no-mapping server where one environment's bodies stand.
 
         bodies: [(name, shape, dims, pose)], shape "cuboid" or "cylinder",
         dims and pose as in scenes.base.Body. Refused by a server that maps.
         """
-        send_msg(self.sock, {"op": "world", "key": key,
+        send_msg(self.sock, {"op": "world", "key": key, "slot": slot,
                              "bodies": [[n, s, list(map(float, d)), list(map(float, p))]
                                         for n, s, d, p in bodies]})
         header, _ = recv_msg(self.sock)

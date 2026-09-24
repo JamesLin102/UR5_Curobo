@@ -2,7 +2,7 @@
 
 `Isaac-Grasp-Ur5Robotiq-v0`：在圓柱之間把立方體夾起來。設計見 [grasp_rl_plan.md](grasp_rl_plan.md)，這份只講**怎麼跑、跑出來是什麼、還缺什麼**。
 
-狀態（2026-09-24）：**訓練模式可以開始訓練**；評估模式（開 mapper、真的感知）還沒做。
+狀態（2026-09-24）：**訓練模式與評估模式都可以用**；批次規劃讓一台機器跑到 128 個環境。
 
 ## 一步是什麼
 
@@ -35,17 +35,68 @@ python tools/check_grasp_env.py --policy random --episodes 30   # 跑遍失敗�
 ## 訓練
 
 ```bash
-python scripts/grasp/isaaclab_train.py --smoke                    # 2 envs、3 次迭代：能不能跑
-python scripts/grasp/isaaclab_train.py --num_envs 8 --run-name first
-python scripts/grasp/isaaclab_train.py --num_envs 16 --num-servers 8 --max-iterations 1000
+python scripts/grasp/isaaclab_train.py --smoke                                  # 2 envs、3 次迭代：能不能跑
+python scripts/grasp/isaaclab_train.py --num_envs 64 --num-servers 1 --batch --run-name first
+python scripts/grasp/isaaclab_train.py --num_envs 128 --num-servers 2 --batch --max-iterations 1000
 tensorboard --logdir logs/rsl_rl/grasp
 ```
+
+- **`--batch`**：每個 planner server 一次規劃它負責的所有環境（cuRobo `BatchMotionPlanner`，每個環境自己的圓柱世界）。一個 server 最多 64 個環境（`--num-servers` 取 `num_envs / 64`）。不加 `--batch` 就是每個環境一個請求。
+
+## 評估
+
+```bash
+python scripts/grasp/isaaclab_eval.py --policy logs/rsl_rl/grasp/<run>/model_500.pt --mode eval
+python scripts/grasp/isaaclab_eval.py --policy <同一個> --mode train      # 對照：訓練的條件
+python scripts/grasp/isaaclab_eval.py --policy oracle --mode eval --num_envs 4
+```
+
+- **`--mode eval`**：planner 不被告知任何東西。每個 episode 開始時腕部相機掃描（HOME、左、後、右），**地圖從掃描建出來**，每個視角的影像交給 **`grasp/perception.py`**，policy 看到的是它的估計；直線移動**對照地圖**檢查（排除估計立方體周圍的方塊）。每個環境一個建圖的 server、要 render，慢。
+- **`--mode train`**：跟訓練一樣。同一個 policy 兩種模式的差距，就是訓練時的捷徑的代價。
 
 - 物理預設在 CPU（這個規模比 GPU 快，plan §9），網路在 `--rl-device cuda:0`。
 - 預設每個環境一個 planner server（每個約 2 GB RAM、0.55 GB GPU）；`--num-servers` 可以比環境少，server 會在請求之間換世界。
 - checkpoint 與 tensorboard 在 `logs/rsl_rl/grasp/<時間>_<run-name>/`，每 25 次迭代存一次；`--resume <model_N.pt>` 接著訓。
 - tensorboard 裡除了 reward，還有 `episode/success`、`attempt/<結果>`（規劃不到、IK 失敗、直線移動被拒、夾空、碰到圓柱）、`stuck_total`（回 HOME 失敗、只好瞬移回去的次數，應該一直是 0）。
 - PPO 設定在 `scripts/grasp/lab_rl_cfg.py`：episode 最多 3 步，所以 `gamma` 0.9；每次迭代每環境 8 步、8 個 epoch。**沒調過**，是起點。
+
+## 感知（`scripts/grasp/perception.py`）
+
+只用 numpy 與 scipy，實機上同一份程式可以跑。輸入每個視角的深度、RGB、內參、相機位姿（正向運動學）；輸出跟訓練時的誤差模型同一個格式。
+
+- 只保留「任何圓柱可能在的方塊」（`NO_GO`）裡的點：掃描姿態本來就讓整隻手臂在方塊外 ≥ 21 mm，所以**不需要把手臂遮掉**。
+- 圓柱：比立方體高得多的柱狀點群，用已知半徑擬合圓心。工作區邊緣（y ≈ 0.31）的圓柱頂端不在任何視角裡（HOME 在 0.30 m 高的視野只到 y ≈ ±0.18），所以不要求看到頂面。
+- 立方體：頂面的黃色像素（用「紅綠比藍多多少」判斷：頂面被照成偏白的黃 (247, 245, 154)），最小外接矩形得到中心與 yaw。
+
+`tools/grasp_capture.py` 拍下配置的掃描畫面與真值，`tools/check_grasp_perception.py` 評分。評估庫 30 組擁擠配置、加 D435 風格深度雜訊（1 m 處 σ 4 mm）：
+
+| | 誤差 |
+|---|---|
+| 立方體位置 | 中位 0.2 mm、最大 0.6 mm |
+| 立方體 yaw | 中位 0.24°、95% 0.49° |
+| 圓柱 | 52/52 找到、0 誤判、圓心最大 1.3 mm |
+
+訓練的誤差模型（2 mm、2°、圓柱 3 mm、2% 漏看、2% 誤判）比這寬很多，**刻意保留**：模擬的深度與 RGB 比實機乾淨，實機的誤差要在實機上量（plan §4 的 ArUco 或治具）。
+
+**評估模式下的 oracle**：38/48（79%），訓練模式是 98%。10 次直線移動被**地圖**拒絕（離地圖 +1 ~ +15 mm）：地圖比真的圓柱胖（體素 15 mm）。把地圖檢查的餘量降到 10 mm 可以放行其中 7 次，但實際間隙可能只剩 ~2.5 mm，而 6 mm 時已經碰到過圓柱，所以**維持 15 mm**。
+
+## 規模化（2026-09-24）
+
+先量時間花在哪裡（`tools/check_grasp_env.py` 印出 planner / 物理 / 每環境 Python 的比例）：
+
+- **每環境 Python 迴圈只佔 1%**：不需要向量化（規劃書原本的前提不成立）。
+- planner 的時間原本是「每個環境各等一次」：直線移動的 IK 在各環境不同的 tick 發出，模擬每次都停。**改成跟規劃一起算**（`MoveTo.then`）之後每步只剩一次往返。
+- **批次規劃**（`--batch`）：規劃 64 個環境約 1.0 秒，一個一個規劃要約 4.8 秒；IK 6 ms、碰撞檢查 90 ms。
+- **GPU 物理不划算**：每 tick 固定約 22 ms（64/16 迭代），CPU 在 128 環境是 8.3 ms；推估要到 ~400 環境才交叉。
+- **PhysX 迭代次數**：降到 32/8，oracle 成功率與夾住角度不變，CPU 每 tick 8.3 → 5.2 ms（GPU 22.5 → 12.5）。grasp 預設 32/8；pick_place 維持 64/16。
+
+| 128 環境 | CPU | GPU |
+|---|---|---|
+| 64/16 迭代 | 12.1 次嘗試/秒 | 6.3 |
+| 32/8 | 15.1 | 9.5 |
+| 16/4 | 16.8 | 12.9 |
+
+（以上各跑 2 步，第一批規劃的暖機佔比偏高；穩定狀態的數字見下。）
 
 ## 量測（2026-09-24）
 
@@ -97,9 +148,9 @@ tensorboard --logdir logs/rsl_rl/grasp
 
 ## 還沒做、大規模訓練前要知道的
 
-1. **評估模式**：開 mapper、用真的感知模組（`grasp/perception.py`，plan §4）量成功率。現在 `mapping=True` 會直接報錯，不會假裝可以。
-2. **直線移動的碰撞檢查只查 planner 被告知的東西**：訓練模式下就是全部；評估模式下還要查地圖（ESDF），目前只查桌子。
-3. **`MoveTo` 不確認有沒有到達**：被擋住時（例如評估時地圖漏了圓柱）仍回報成功。訓練模式下 planner 知道圓柱，不會發生。
-4. **規模化（plan §9，M5）**：批次規劃（`BatchMotionPlanner`）、每環境 Python 迴圈向量化、GPU PhysX 基準測試。
-5. **誤差模型是初值**，要用評估模式和實機量到的感知誤差校正。
+1. **評估模式比訓練模式低約 20 個百分點（oracle）**：主要是地圖比真的圓柱胖、直線移動被拒。改善方向：更多掃描視角、更細的體素、只對「看得到的」表面加餘量。
+2. **`MoveTo` 不確認有沒有到達**：被擋住時（例如評估時地圖漏了圓柱）仍回報成功。評估模式的 oracle 有 2 次碰到圓柱，就是地圖不夠完整的地方。
+3. **邊緣圓柱的頂端不在任何視角裡**：地圖在那裡沒有頂部，planner 可能從上方擦過。
+4. **誤差模型是刻意放寬的初值**，實機上要重新量。
+5. **`BatchMotionPlanner` 是 cuRobo 的私有模組**，不會重試（這裡設 2 次嘗試）；升級 cuRobo 時可能要改。
 6. **回 HOME 偶爾會卡住**（只在 `max_attempts` > 1 時；一次機會時每個 episode 結束就 reset）：隨機動作的壓力測試裡約每 500 次嘗試 1 次，都在很窄的配置（例如預抓取點離圓柱只有 11 mm）：直線上抬會更靠近圓柱、兩種規劃回 HOME 都失敗。模擬裡會瞬移回去並計入 `stuck_total`；實機上這就是需要人處理的情況。oracle 從沒卡過。

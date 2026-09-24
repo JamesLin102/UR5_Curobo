@@ -66,6 +66,12 @@ class GraspEnvCfg(CellEnvCfg):
         self.cell.mapping = False          # training mode; set True for evaluation
         self.cell.markers = "off"          # overlays show up in colour images
         self.cell.verbose = False
+        # Half the rig's 64/16 PhysX iterations. Measured at 128 envs: the
+        # oracle lifted 242/256 at 64/16, 32/8 and 16/4 alike, the gripper
+        # holding at 0.38-0.44 rad in all three, while a CPU physics step went
+        # 8.3 -> 5.2 -> 3.9 ms (GPU: 22.5 -> 12.5 -> 7.5). pick_place keeps
+        # the rig's, which its gripper linkage was measured on.
+        self.cell.solver_iterations = (32, 8)
 
 
 class GraspEnv(CellEnv):

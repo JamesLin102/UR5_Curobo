@@ -119,7 +119,7 @@ def make_robot_cfg(robot_key, cell, home=None):
                              f"{len(arm_joints)} arm joints")
         joint_pos.update(dict(zip(arm_joints, map(float, home))))
 
-    pos_iters, vel_iters = spec["solver_iterations"]
+    pos_iters, vel_iters = cell.solver_iterations or spec["solver_iterations"]
     return ArticulationCfg(
         spawn=RigUrdfFileCfg(
             asset_path=os.path.join(ROOT, spec["urdf"]),

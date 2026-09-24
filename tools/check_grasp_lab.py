@@ -42,8 +42,8 @@ ap.add_argument("--seed", type=int, default=0)
 AppLauncher.add_app_launcher_args(ap)
 ARGS = ap.parse_args()
 ARGS.headless = True
-if ARGS.device == "cuda:0":
-    ARGS.device = "cpu"
+if ARGS.device == "cuda:0" and "--device" not in sys.argv:
+    ARGS.device = "cpu"      # the faster at these sizes; --device cuda:0 to override
 
 
 def log(msg):

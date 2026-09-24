@@ -17,6 +17,7 @@ the comments there for why each piece is the way it is.
 """
 
 import os
+import time
 from dataclasses import dataclass
 from typing import Dict, Optional
 
@@ -97,6 +98,7 @@ class LabCell:
         self.goal = [None] * self.num_envs       # last commanded tool pose, env-local
         self.plan_end = [None] * self.num_envs   # joints where the last MoveTo ended (Retrace)
         self.plan_goal = [None] * self.num_envs  # ...and the tool pose it was sent to
+        self.presolved = [[] for _ in range(self.num_envs)]   # MoveTo.then's answers
         self.closed = np.zeros(self.num_envs, dtype=bool)
         self._arm_cmd = np.zeros((self.num_envs, len(self.arm_idx)))
         self._grip_cmd = np.zeros((self.num_envs, len(self.grip_idx_all)))
@@ -183,16 +185,24 @@ class LabCell:
 
     def tick(self):
         """One physics step for every environment, then read back what it did."""
+        prof = self.runner.profile if hasattr(self, "runner") else None
+        t0 = time.perf_counter()
         self._flush()
         self.scene.write_data_to_sim()
+        t1 = time.perf_counter()
         self.sim.step(render=False)
         if self._render:
             self.sim.render()
+        t2 = time.perf_counter()
         self.scene.update(self.dt)
         self.update_cameras()
         self._update_contacts()
         self.steps += 1
         self._refresh()
+        if prof is not None:
+            prof["tick.write"] += t1 - t0
+            prof["tick.step"] += t2 - t1
+            prof["tick.read"] += time.perf_counter() - t2
         self._hist[:, self._hist_at] = self._q
         self._hist_at = (self._hist_at + 1) % self._hist.shape[1]
         self._hist_n = np.minimum(self._hist_n + 1, self._hist.shape[1])
@@ -320,6 +330,7 @@ class LabCell:
             self.goal[e] = None
             self.plan_end[e] = None
             self.plan_goal[e] = None
+            self.presolved[e] = []
             self.closed[e] = False
         self._refresh()
 

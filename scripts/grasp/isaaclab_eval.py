@@ -117,7 +117,8 @@ def make_policy(env):
 
     def act(obs):
         with torch.inference_mode():
-            return policy(wrapped.get_observations()).to(u.device).clamp(-1, 1)
+            # The networks may be on the GPU and the env's physics on the CPU.
+            return policy(wrapped.get_observations().to(agent.device)).to(u.device).clamp(-1, 1)
     return act
 
 

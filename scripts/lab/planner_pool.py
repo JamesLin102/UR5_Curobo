@@ -38,8 +38,12 @@ class PlannerPool:
         """The planner's arm joint order, which the cell maps onto the simulator's."""
         raise NotImplementedError
 
-    def plan(self, env_ids: Sequence[int], q: np.ndarray, targets: np.ndarray) -> List[dict]:
-        """One reply header per env; with "traj" (n x dof float32) when "ok"."""
+    def plan(self, env_ids: Sequence[int], q: np.ndarray, targets: np.ndarray,
+             then=None) -> List[dict]:
+        """One reply header per env; with "traj" (n x dof float32) when "ok".
+
+        then[k]: straight moves to solve with it (MoveTo.then); the reply's
+        "then" has their joints."""
         raise NotImplementedError
 
     def plan_joint(self, env_ids, q, goals) -> List[dict]:
@@ -131,9 +135,11 @@ class ServerPool(PlannerPool):
     def _world(self, env):
         return int(env) if int(env) in self.worlds else None
 
-    def plan(self, env_ids, q, targets):
+    def plan(self, env_ids, q, targets, then=None):
+        then = then if then is not None else [()] * len(env_ids)
         return self._each(env_ids, lambda c, k: c.plan(
-            q[k], [float(v) for v in targets[k]], world=self._world(env_ids[k])))
+            q[k], [float(v) for v in targets[k]], world=self._world(env_ids[k]),
+            then=then[k], exclude=self.exclude.get(int(env_ids[k]))))
 
     def plan_joint(self, env_ids, q, goals):
         return self._each(env_ids, lambda c, k: c.plan_joint(
@@ -173,7 +179,7 @@ class NullPool(PlannerPool):
     def joint_names(self, home, target):
         return list(ROBOTS[self.robot]["arm"]["joints"])
 
-    def plan(self, env_ids, q, targets):
+    def plan(self, env_ids, q, targets, then=None):
         return [{"ok": False, "status": "no planner (planner_mode 'none')"} for _ in env_ids]
 
     def plan_joint(self, env_ids, q, goals):
@@ -192,8 +198,51 @@ class NullPool(PlannerPool):
         pass
 
 
+class BatchPool(ServerPool):
+    """ServerPool on servers started with --batch: an env step's plans go out
+    as ONE batch per server (plan_batch), not one request per environment.
+
+    Env e is on server e % k, in slot e // k of its batch; each server's
+    --batch must be at least ceil(num_envs / k). Training mode only: every
+    environment's world must have been set (set_world). Everything else --
+    straight moves not solved with a plan, plans home -- is as ServerPool.
+    """
+
+    def _slot(self, env):
+        return int(env) // len(self.clients)
+
+    def set_world(self, env_ids, bodies):
+        self._each(env_ids, lambda c, k: c.set_world(int(env_ids[k]), bodies[k],
+                                                     slot=self._slot(env_ids[k])))
+        self.worlds |= {int(e) for e in env_ids}
+
+    def plan(self, env_ids, q, targets, then=None):
+        then = then if then is not None else [()] * len(env_ids)
+        if any(int(e) not in self.worlds for e in env_ids):
+            return super().plan(env_ids, q, targets, then)
+        by_client = {}
+        for k, e in enumerate(env_ids):
+            by_client.setdefault(int(e) % len(self.clients), []).append(k)
+        out = [None] * len(env_ids)
+
+        def run(ci, ks):
+            reqs = [{"slot": self._slot(env_ids[k]), "q": q[k], "target": targets[k],
+                     "then": then[k]} for k in ks]
+            for k, reply in zip(ks, self.clients[ci].plan_batch(reqs)):
+                out[k] = reply
+
+        if self._threads is None or len(by_client) == 1:
+            for ci, ks in by_client.items():
+                run(ci, ks)
+        else:
+            for f in [self._threads.submit(run, ci, ks) for ci, ks in by_client.items()]:
+                f.result()
+        return out
+
+
 POOLS = {
     "server": ServerPool,
+    "batch": BatchPool,
     "none": NullPool,
 }
 

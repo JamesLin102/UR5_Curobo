@@ -34,6 +34,8 @@ from isaaclab.app import AppLauncher  # noqa: E402
 ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
 ap.add_argument("--num_envs", type=int, default=8)
 ap.add_argument("--num-servers", type=int, default=0, help="0: one per env")
+ap.add_argument("--batch", action="store_true",
+                help="plan every env of a server in one batch (planner_server --batch)")
 ap.add_argument("--no-servers", action="store_true", help="planner servers are already running")
 ap.add_argument("--max-iterations", type=int, default=None)
 ap.add_argument("--bank", default="train")
@@ -57,9 +59,10 @@ def log(msg):
 
 def start_servers(k):
     logfile = os.path.join(tempfile.gettempdir(), f"grasp_train_servers_{os.getpid()}.log")
+    extra = ["--batch", str(-(-ARGS.num_envs // k))] if ARGS.batch else []
     proc = subprocess.Popen(
         [sys.executable, "-u", os.path.join(SCRIPTS, "planner_servers.py"), "--num", str(k),
-         "--scene", "grasp", "--no-mapping"],
+         "--scene", "grasp", "--no-mapping"] + extra,
         stdout=open(logfile, "w"), stderr=subprocess.STDOUT, cwd=ROOT, start_new_session=True)
     deadline = time.time() + 900
     while time.time() < deadline:
@@ -93,6 +96,8 @@ def main():
     tid = task_id("Grasp", "ur5_robotiq")
     env_cfg = parse_env_cfg(tid, device=ARGS.device, num_envs=ARGS.num_envs)
     env_cfg.cell.num_servers = ARGS.num_servers
+    if ARGS.batch:
+        env_cfg.cell.planner_mode = "batch"
     env_cfg.task.bank = ARGS.bank
     env_cfg.seed = ARGS.seed
 

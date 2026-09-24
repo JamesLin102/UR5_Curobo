@@ -1,6 +1,6 @@
 # 規劃書：給 RL 用的第二個情境 —— 在圓柱之間夾取立方體
 
-狀態：**訓練模式可以訓練**（2026-09-24）：M0–M3 完成，M4 除了感知模組都完成；怎麼跑見 [grasp_training.md](grasp_training.md)。只在 Isaac Lab backend 上做；Isaac Sim backend 維持凍結，不跟進。
+狀態：**訓練與評估都可以跑**（2026-09-24）：M0–M5 完成；怎麼跑見 [grasp_training.md](grasp_training.md)。只在 Isaac Lab backend 上做；Isaac Sim backend 維持凍結，不跟進。
 
 ## 1. 目標與已定案的決定
 
@@ -461,8 +461,8 @@ GPU PhysX（128–256 個 UR5 + 2F-85，預估 1 GB 以內）、`BatchMotionPlan
 | M1 ✅ | 形狀、碰撞、reset 位姿、夾爪角度 `holding`，`pick_place` 行為不變 | ✅ 圓柱形狀（`SceneSpec.shapes`，Isaac Lab 生成、相機對位、server 淨空報告；Isaac Sim 後端明確拒絕）、只給 planner 的 `keep_out` 與 `planner_joint_limits`、相機可選 RGB；✅ 圓柱是 kinematic 碰撞體加接觸感測器；✅ reset 任意位姿；✅ 夾爪角度判斷夾住（< 0.60 rad；夾住 0.18–0.46、夾空 0.78–0.80）。pick_place 數字不變（mapping off −26/−20/−16/−20 mm） |
 | M2 ✅ | `grasp/scene.py`、HOME 與掃描姿態、固定配置，真值 oracle | ✅ HOME 可達、視野涵蓋工作區；✅ 掃描路徑離圓柱區 ≥ 21 mm、離地板防護 ≥ 44 mm；✅ 空桌面 20/20；✅ `GRASP_Z` 在桌面上可用；✅ 夾爪角度門檻（夾空 0.78–0.80 rad） |
 | M3 ✅ | 每環境世界（做法 A、B 都支援）、直線移動碰撞檢查（15 mm）、可行配置庫與課程、失敗後沿原路退回再規劃回 HOME | ✅ oracle 55/55（評估庫）；✅ 配置庫訓練 3000、評估 300，難度分布見 grasp_training.md |
-| M4（部分） | `grasp/perception.py`、誤差模型、`GraspEnv` 註冊 | 評估模式下感知誤差統計（位置、yaw、圓柱，對可見比例）；掃描後每根圓柱的體素覆蓋；oracle 吃感知輸出後的成功率；rsl_rl wrapper 接受 |
-| M5 | 向量化、做法 C、GPU 基準測試（§9） | 每秒夾取嘗試數與 GPU 記憶體的表；決定訓練用 GPU 或 CPU、幾個環境 |
+| M4 ✅ | `grasp/perception.py`、誤差模型、`GraspEnv` 註冊 | 評估模式下感知誤差統計（位置、yaw、圓柱，對可見比例）；掃描後每根圓柱的體素覆蓋；oracle 吃感知輸出後的成功率；rsl_rl wrapper 接受 |
+| M5 ✅ | 向量化、做法 C、GPU 基準測試（§9）：批次規劃完成；向量化量過不需要（1%）；GPU 在 128 環境仍比 CPU 慢，見 grasp_training.md | 每秒夾取嘗試數與 GPU 記憶體的表；決定訓練用 GPU 或 CPU、幾個環境 |
 | M6 | 第一次訓練，在評估模式下評估 | 擁擠等級上贏過 oracle；訓練 vs 評估的差距；依 M4 修正誤差模型再訓一次 |
 | M7 | 實機 | 另開規劃：eye-in-hand 標定、ArUco 量實機感知誤差、安全範圍 |
 

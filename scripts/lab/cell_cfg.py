@@ -47,4 +47,7 @@ class CellCfg:
     # also folds links that have mass into theirs (Isaac Lab's default).
     merge_inertial: bool = False
     force_usd: bool = False             # regenerate the USD even if the cache looks current
+    # PhysX (position, velocity) solver iterations; None: rig.ROBOTS' own. GPU
+    # PhysX's per-step cost grows with them, not with the number of envs.
+    solver_iterations: tuple = None
     usd_dir: str = "~/.cache/ur5_curobo/lab_usd"

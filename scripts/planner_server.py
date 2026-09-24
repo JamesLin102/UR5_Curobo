@@ -48,6 +48,7 @@ from curobo.perception import FilterDepth, Mapper, MapperCfg, RobotSegmenter  # 
 from curobo.motion_planner import MotionPlanner, MotionPlannerCfg  # noqa: E402
 from curobo.inverse_kinematics import InverseKinematics  # noqa: E402
 from curobo._src.robot.loader.util import load_robot_yaml  # noqa: E402
+from curobo._src.geom.types import SceneCfg  # noqa: E402
 from urdf_frames import quat_to_matrix as quat_to_matrix_np  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -448,34 +449,30 @@ def narrowed_urdf(urdf_path, limits):
     return out
 
 
-def build(robot_key, scene, use_cuda_graph=True):
-    spec = ROBOTS[robot_key]
-    content = ContentPath(
-        robot_config_absolute_path=f"{ROOT}/{spec['config']}",
-        robot_urdf_absolute_path=f"{ROOT}/{spec['urdf']}",
-        robot_asset_absolute_path=f"{ROOT}/{spec['assets']}",
-    )
-    robot_dict = load_robot_yaml(content)
+def planner_robot_dict(robot_key, scene, robot_dict):
+    """The robot as the PLANNER gets it: only the goal frame as a tool frame,
+    no mask-only spheres, and the scene's joint limits (narrowed URDF).
 
-    # Two views of the same URDF. `kin` keeps every tool frame, including
-    # camera_link, so the mapper can get the camera pose by forward kinematics.
-    # The planner gets a copy with only the real goal frame: any frame left in
-    # tool_frames becomes something plan_pose demands a target for.
-    kin = Kinematics(KinematicsCfg.from_content_path(content))
+    Shared by the single planner (build) and the batch one (BatchPlanning),
+    so the two plan for the same robot.
+    """
+    spec = ROBOTS[robot_key]
+    # Only the real goal frame: any frame left in tool_frames becomes something
+    # plan_pose demands a target for. (The kinematics the mapper uses keeps
+    # them all, camera_link included.)
     planner_dict = copy.deepcopy(robot_dict)
     planner_dict["robot_cfg"]["kinematics"]["tool_frames"] = [spec["tool_frame"]]
     # The scene may keep the planner off an IK branch (grasp: elbow down, which
     # is collision-free at the pre-grasp and drives the forearm into the table
-    # on the way down). `kin` keeps the full URDF: it only does forward
-    # kinematics, for the cameras.
+    # on the way down). The mapper's kinematics keep the full URDF.
     if scene.planner_joint_limits:
         planner_dict["robot_cfg"]["kinematics"]["urdf_path"] = narrowed_urdf(
             f"{ROOT}/{spec['urdf']}", scene.planner_joint_limits)
         print("[planner] joint limits narrowed for planning: " + ", ".join(
             f"{j} [{lo:+.2f}, {hi:+.2f}]" for j, (lo, hi) in scene.planner_joint_limits.items()),
             flush=True)
-    # The base's spheres are for the SEGMENTER, not the planner. `kin` above
-    # keeps them so the cameras can mask the robot's own base out of the
+    # The base's spheres are for the SEGMENTER, not the planner. The mapper's
+    # kinematics keep them so the cameras can mask the robot's own base out of the
     # depth; the planner must not check them, because the base is bolted to
     # the table and they sit 17 mm inside it in every configuration -- with
     # them, every plan fails, with no map loaded at all.
@@ -495,6 +492,24 @@ def build(robot_key, scene, use_cuda_graph=True):
             pk["collision_spheres"].pop(n, None)
         print(f"[planner] spheres kept for masking, hidden from the planner: "
               f"{', '.join(dropped)}", flush=True)
+
+    return planner_dict
+
+
+def build(robot_key, scene, use_cuda_graph=True):
+    spec = ROBOTS[robot_key]
+    content = ContentPath(
+        robot_config_absolute_path=f"{ROOT}/{spec['config']}",
+        robot_urdf_absolute_path=f"{ROOT}/{spec['urdf']}",
+        robot_asset_absolute_path=f"{ROOT}/{spec['assets']}",
+    )
+    robot_dict = load_robot_yaml(content)
+
+    # Two views of the same URDF. `kin` keeps every tool frame, including
+    # camera_link, so the mapper can get the camera pose by forward kinematics.
+    # The planner gets its own (planner_robot_dict).
+    kin = Kinematics(KinematicsCfg.from_content_path(content))
+    planner_dict = planner_robot_dict(robot_key, scene, robot_dict)
 
     planner = MotionPlanner(
         MotionPlannerCfg.create(
@@ -587,7 +602,31 @@ def unmapped_clearance(planner, bodies, traj_q):
     return ", ".join(out)
 
 
-def handle_plan(planner, kin, tool_frame, header, approach_ik=None, bodies=()):
+def solve_then(approach_ik, kin, tool_frame, header, q_end, path_check, bodies, mapping):
+    """The straight moves asked for with a plan ("then": [[dz, check], ...]).
+
+    Each solved as a separate "ik" request would be -- IK seeded from where
+    the last one ends, the joint blend checked -- starting from the plan's own
+    last waypoint. Stops at the first that fails: the rest would start from
+    somewhere the arm will not be.
+    """
+    out, q, target = [], q_end, list(header["target"])
+    for dz, check in header.get("then") or []:
+        target = list(target)
+        target[2] += float(dz)
+        sub = {"q": q.tolist(), "target": target, "check": check,
+               "exclude": header.get("exclude")}
+        reply, blob = handle_ik(approach_ik, kin, tool_frame, sub, path_check, bodies, mapping)
+        if not reply["ok"]:
+            out.append({"ok": False, "status": reply.get("status", "ik failed")})
+            break
+        q = np.frombuffer(blob, dtype=np.float32).astype(np.float64)
+        out.append({"ok": True, "q": q.tolist()})
+    return out
+
+
+def handle_plan(planner, kin, tool_frame, header, approach_ik=None, bodies=(),
+                path_check=None, then_bodies=(), mapping=None):
     q = torch.tensor([header["q"]], device="cuda", dtype=torch.float32)
     start = JointState.from_position(q, joint_names=kin.joint_names)
     goal = GoalToolPose.from_poses({tool_frame: Pose.from_list(header["target"])})
@@ -618,7 +657,12 @@ def handle_plan(planner, kin, tool_frame, header, approach_ik=None, bodies=()):
             out["goal_q"] = (ik.solution[ik.success].view(-1, len(kin.joint_names))[0]
                              .cpu().numpy().astype(float).tolist())
         return out, b""
-    return trajectory_reply(res, planner, kin, out, bodies)
+    out, blob = trajectory_reply(res, planner, kin, out, bodies)
+    if header.get("then"):
+        q_end = np.frombuffer(blob, dtype=np.float32).reshape(out["n"], out["dof"])[-1]
+        out["then"] = solve_then(approach_ik, kin, tool_frame, header, q_end,
+                                 path_check, then_bodies, mapping)
+    return out, blob
 
 
 def trajectory_reply(res, planner, kin, out, bodies):
@@ -739,6 +783,132 @@ class Worlds:
 
     def of(self, key):
         return self.bodies.get(key) if key is not None else None
+
+
+class BatchPlanning:
+    """Many environments' plans in one trajectory optimisation (--batch N).
+
+    cuRobo 0.8's BatchMotionPlanner (a private module, curobo._src.motion:
+    it may move on an upgrade), with one collision world per slot
+    (multi_env): environment requests are placed at their slot, planned
+    together, and their straight moves solved with a batched collision-free
+    IK, one stage at a time. Measured on this robot and scene, pre-grasps
+    for the grasp layouts: 8 in 133 ms and 32 in 491 ms, where the single
+    planner took 1086 ms and 2393 ms one after another -- all solved either
+    way. It does not retry as the single planner does (max_attempts here).
+    """
+
+    ATTEMPTS = 2
+
+    def __init__(self, robot_key, scene, robot_dict, kin, tool_frame, size, use_cuda_graph=True):
+        from curobo._src.motion.motion_planner_batch import BatchMotionPlanner
+
+        self.scene, self.kin, self.tool, self.size = scene, kin, tool_frame, size
+        self.static = {"cuboid": {n: {"dims": list(d), "pose": list(p)}
+                                  for n, d, p, _ in list(scene.obstacles) + list(scene.keep_out)}}
+        cfg = MotionPlannerCfg.create(
+            robot=planner_robot_dict(robot_key, scene, robot_dict),
+            scene_model=[copy.deepcopy(self.static) for _ in range(size)],
+            use_cuda_graph=use_cuda_graph, interpolation_dt=SIM_DT,
+            max_batch_size=size, multi_env=True, collision_cache={"obb": 32})
+        self.planner = BatchMotionPlanner(cfg)
+        self.planner.warmup()
+        self.ik = InverseKinematics(copy.deepcopy(self.planner.config.ik_solver_config), None)
+        self.names = list(kin.joint_names)
+        self.bodies = [[] for _ in range(size)]
+
+    def set_world(self, slot, bodies):
+        world = copy.deepcopy(self.static)
+        for name, shape, dims, pose in bodies:
+            if shape == "cylinder":
+                box = Cylinder(name=name, radius=dims[0] / 2, height=dims[2], pose=pose).get_cuboid()
+                world["cuboid"][name] = {"dims": list(box.dims), "pose": list(box.pose)}
+            else:
+                world["cuboid"][name] = {"dims": list(dims), "pose": list(pose)}
+        self.planner.scene_collision_checker.load_collision_model(SceneCfg.create(world), env_idx=slot)
+        self.bodies[slot] = bodies
+
+    def _goal(self, targets):
+        t = torch.tensor(targets, device="cuda", dtype=torch.float32)
+        return GoalToolPose.from_poses({self.tool: Pose(position=t[:, :3].contiguous(),
+                                                        quaternion=t[:, 3:].contiguous())})
+
+    def _js(self, q):
+        return JointState.from_position(torch.as_tensor(q, device="cuda", dtype=torch.float32),
+                                        joint_names=self.names)
+
+    def plan(self, reqs, path_check):
+        """reqs: [{"slot", "q", "target", "then"}] -> ([header], [float32 bytes]) in order."""
+        B = self.size
+        slots = [int(r["slot"]) for r in reqs]
+        if len(set(slots)) != len(slots) or max(slots) >= B:
+            raise ValueError(f"batch slots {slots} must be distinct and below {B}")
+        q = np.tile(np.asarray(reqs[0]["q"], dtype=np.float32), (B, 1))
+        tgt = np.tile(np.asarray(reqs[0]["target"], dtype=np.float32), (B, 1))
+        for r, s in zip(reqs, slots):
+            q[s], tgt[s] = r["q"], r["target"]
+        res = self.planner.plan_pose(self._goal(tgt), self._js(q), max_attempts=self.ATTEMPTS)
+        ok = (res.success.any(dim=-1).cpu().numpy() if res is not None else np.zeros(B, bool))
+        heads, blobs = [None] * len(reqs), [b""] * len(reqs)
+        ends = {}
+        if res is not None:
+            it = res.interpolated_trajectory
+            names = list(it.joint_names) if it.joint_names is not None else self.names
+            keep = [names.index(j) for j in self.names]
+            pos = it.position[:, 0][:, :, keep]
+            last = res.interpolated_last_tstep
+        for k, (r, s) in enumerate(zip(reqs, slots)):
+            head = {"ok": bool(ok[s]), "joint_names": self.names, "tool_frame": self.tool}
+            if ok[s]:
+                n = int(last[s, 0]) if last is not None else pos.shape[1]
+                n = max(2, min(n, pos.shape[1]))
+                traj = pos[s, :n].contiguous().cpu().numpy().astype(np.float32)
+                head.update(n=n, dof=traj.shape[1], solve_ms=float(res.solve_time * 1e3),
+                            clearance="")
+                blobs[k] = traj.tobytes()
+                ends[k] = traj[-1].astype(np.float64)
+            else:
+                head["status"] = "batch plan failed"
+                head["goal"] = "no plan (batch)"
+            heads[k] = head
+        # The straight moves asked for with the plans, one stage at a time,
+        # every environment that is still going solved together.
+        going = {k: (ends[k], list(reqs[k]["target"])) for k in ends if reqs[k].get("then")}
+        for k in going:
+            heads[k]["then"] = []
+        stage = 0
+        while going:
+            qs = np.tile(next(iter(going.values()))[0], (B, 1))
+            tg = np.tile(np.asarray(next(iter(going.values()))[1], dtype=np.float64), (B, 1))
+            for k, (q0, t0) in going.items():
+                dz, _check = reqs[k]["then"][stage]
+                t1 = list(t0)
+                t1[2] += float(dz)
+                qs[slots[k]], tg[slots[k]] = q0, t1
+                going[k] = (q0, t1)
+            sol = self.ik.solve_pose(self._goal(tg), current_state=self._js(qs))
+            succ = sol.success.view(B, -1).any(dim=-1).cpu().numpy() if sol is not None else np.zeros(B, bool)
+            q1 = (sol.solution.view(B, -1, len(self.names))[:, 0].cpu().numpy().astype(np.float64)
+                  if sol is not None else None)
+            nxt = {}
+            for k, (q0, t1) in going.items():
+                s = slots[k]
+                dz, check = reqs[k]["then"][stage]
+                if not succ[s]:
+                    heads[k]["then"].append({"ok": False, "status": "ik failed"})
+                    continue
+                if check and path_check is not None:
+                    good, why = path_check(torch.tensor(q0, device="cuda", dtype=torch.float32),
+                                           torch.tensor(q1[s], device="cuda", dtype=torch.float32),
+                                           self.bodies[s], escape=check == "escape")
+                    if not good:
+                        heads[k]["then"].append({"ok": False, "status": why})
+                        continue
+                heads[k]["then"].append({"ok": True, "q": q1[s].tolist()})
+                if stage + 1 < len(reqs[k]["then"]):
+                    nxt[k] = (q1[s], t1)
+            going, stage = nxt, stage + 1
+        return heads, blobs
 
 
 class PathCheck:
@@ -912,6 +1082,9 @@ def main():
                     help="build the planner without CUDA graphs")
     ap.add_argument("--allow-curobo-drift", action="store_true",
                     help="run on a cuRobo other than rig.CUROBO_COMMIT")
+    ap.add_argument("--batch", type=int, default=0,
+                    help="also plan up to N environments at once (op plan_batch); "
+                         "--no-mapping only: each gets a world of its own")
     ap.add_argument("--port", type=int, default=PORT,
                     help="one server holds one map, so each environment of a "
                          "multi-environment run gets its own: see planner_servers.py")
@@ -941,6 +1114,16 @@ def main():
 
     worlds = Worlds(scene, planner)
     path_check = PathCheck(kin, args.robot, scene)
+    batch = None
+    if args.batch:
+        if mapping is not None:
+            raise SystemExit("[planner] --batch needs --no-mapping: a batch of worlds is "
+                             "for environments whose bodies the planner is told")
+        print(f"[planner] building the batch planner for {args.batch} environments...", flush=True)
+        batch = BatchPlanning(args.robot, scene, robot_dict, kin, tool_frame, args.batch,
+                              use_cuda_graph=not args.no_cuda_graph)
+        print(f"[planner] batch planner ready: {args.batch} worlds", flush=True)
+    worlds.batch = batch
 
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -1028,7 +1211,20 @@ def serve(conn, args, scene, planner, kin, tool_frame, approach_ik, mapping,
                                     "this server maps: the bodies must come from the cameras"})
                     continue
                 worlds.set(header["key"], header.get("bodies", []))
+                if worlds.batch is not None and header.get("slot") is not None:
+                    worlds.batch.set_world(int(header["slot"]), worlds.of(header["key"]))
                 send_msg(conn, {"ok": True})
+
+            elif op == "plan_batch":
+                if worlds.batch is None:
+                    send_msg(conn, {"ok": False, "status": "this server was not started with --batch"})
+                    continue
+                heads, blobs = worlds.batch.plan(header["requests"], path_check)
+                n_ok = sum(h["ok"] for h in heads)
+                print(f"[planner] batch of {len(heads)}: {n_ok} planned"
+                      + (f", {heads[0].get('solve_ms', 0):.0f} ms" if n_ok else ""), flush=True)
+                send_msg(conn, {"ok": True, "replies": heads, "sizes": [len(b) for b in blobs]},
+                         b"".join(blobs))
 
             elif op == "ik":
                 out, blob = handle_ik(approach_ik, kin, tool_frame, header,
@@ -1045,7 +1241,8 @@ def serve(conn, args, scene, planner, kin, tool_frame, approach_ik, mapping,
                 send_msg(conn, out, blob)
 
             elif op == "plan":
-                out, blob = handle_plan(planner, kin, tool_frame, header, approach_ik, bodies)
+                out, blob = handle_plan(planner, kin, tool_frame, header, approach_ik, bodies,
+                                        path_check, bodies if key is not None else [], mapping)
                 if out["ok"]:
                     gap = out.get("clearance")
                     print(f"[planner] plan ok: {out['solve_ms']:.0f} ms, "

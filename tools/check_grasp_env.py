@@ -39,6 +39,8 @@ from isaaclab.app import AppLauncher  # noqa: E402
 ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
 ap.add_argument("--num-envs", type=int, default=4)
 ap.add_argument("--num-servers", type=int, default=0, help="0: one per env")
+ap.add_argument("--batch", action="store_true",
+                help="plan every env of a server in one batch (planner_server --batch)")
 ap.add_argument("--episodes", type=int, default=12)
 ap.add_argument("--bank", default="train")
 ap.add_argument("--no-noise", action="store_true", help="the oracle sees the truth")
@@ -46,13 +48,15 @@ ap.add_argument("--min-success", type=float, default=0.8)
 ap.add_argument("--policy", choices=("oracle", "random"), default="oracle",
                 help="random: exercise every failure path (no success bar)")
 ap.add_argument("--seed", type=int, default=0)
+ap.add_argument("--solver-iterations", type=int, nargs=2, default=None,
+                help="PhysX position/velocity iterations (default: rig.ROBOTS')")
 ap.add_argument("--one-grip-fraction", type=float, default=None,
                 help="share of episodes from layouts with one working grip (TaskCfg)")
 AppLauncher.add_app_launcher_args(ap)
 ARGS = ap.parse_args()
 ARGS.headless = True
-if ARGS.device == "cuda:0":
-    ARGS.device = "cpu"
+if ARGS.device == "cuda:0" and "--device" not in sys.argv:
+    ARGS.device = "cpu"      # the faster at these sizes; --device cuda:0 to override
 
 
 def log(msg):
@@ -61,9 +65,10 @@ def log(msg):
 
 def start_servers(k):
     logfile = os.path.join(tempfile.gettempdir(), "check_grasp_env_servers.log")
+    extra = ["--batch", str(-(-ARGS.num_envs // k))] if ARGS.batch else []
     proc = subprocess.Popen(
         [sys.executable, "-u", os.path.join(ROOT, "scripts", "planner_servers.py"),
-         "--num", str(k), "--scene", "grasp", "--no-mapping"],
+         "--num", str(k), "--scene", "grasp", "--no-mapping"] + extra,
         stdout=open(logfile, "w"), stderr=subprocess.STDOUT, cwd=ROOT, start_new_session=True)
     deadline = time.time() + 900
     while time.time() < deadline:
@@ -107,6 +112,10 @@ def main():
     tid = task_id("Grasp", "ur5_robotiq")
     cfg = parse_env_cfg(tid, device=ARGS.device, num_envs=ARGS.num_envs)
     cfg.cell.num_servers = ARGS.num_servers
+    if ARGS.solver_iterations:
+        cfg.cell.solver_iterations = tuple(ARGS.solver_iterations)
+    if ARGS.batch:
+        cfg.cell.planner_mode = "batch"
     cfg.task.bank = ARGS.bank
     cfg.task.noise = not ARGS.no_noise
     if ARGS.one_grip_fraction is not None:
@@ -149,6 +158,15 @@ def main():
             f"env{e} {a['outcome']}{'+' if a['success'] else ''}" for e, a in enumerate(extras["attempt"])))
 
     per_attempt = np.mean(step_times) / u.num_envs
+    prof = u.cell.runner.profile
+    total = sum(v for k, v in prof.items() if k in ("planner", "physics", "ops"))
+    log("where run() spent its time: " + ", ".join(
+        f"{k} {v:.1f} s ({100 * v / total:.0f}%)" for k, v in prof.items()
+        if k in ("planner", "physics", "ops")) + f"; {int(prof['ticks'])} ticks, "
+        f"{1000 * prof['physics'] / max(prof['ticks'], 1):.1f} ms each "
+        f"(write {1000 * prof['tick.write'] / max(prof['ticks'], 1):.1f}, "
+        f"step {1000 * prof['tick.step'] / max(prof['ticks'], 1):.1f}, "
+        f"read {1000 * prof['tick.read'] / max(prof['ticks'], 1):.1f})")
     log(f"oracle: {successes}/{episodes} episodes succeeded ({100 * successes / episodes:.0f}%), "
         f"{first_try} on the first attempt")
     log(f"attempts: {dict(outcomes)}; contacts {contacts}; returns home teleported {u.stuck}")

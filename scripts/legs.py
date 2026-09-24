@@ -39,8 +39,9 @@ def leg_ops(pose, close, open_first, descend, lift, check=False, hold=20):
     above = list(pose)
     above[2] += descend
     ops = [Grip(close=False)] if open_first else []
+    then = ((-descend, check), (lift, check)) if check else ()
     return ops + [
-        MoveTo(above, why="no plan", fail_idle=30),
+        MoveTo(above, why="no plan", fail_idle=30, then=then),
         Idle(20),
         MoveZ(-descend, why="no IK going down", check=check),
         Idle(15),
