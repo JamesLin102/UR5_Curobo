@@ -36,7 +36,7 @@ python tools/check_grasp_env.py --policy random --episodes 30   # 跑遍失敗�
 
 ```bash
 python scripts/grasp/isaaclab_train.py --smoke                                  # 2 envs、3 次迭代：能不能跑
-python scripts/grasp/isaaclab_train.py --num_envs 64 --num-servers 1 --batch --run-name first
+python scripts/grasp/isaaclab_train.py --num_envs 64 --num-servers 1 --batch --run-name first   # 建議
 python scripts/grasp/isaaclab_train.py --num_envs 128 --num-servers 2 --batch --max-iterations 1000
 tensorboard --logdir logs/rsl_rl/grasp
 ```
@@ -96,7 +96,17 @@ python scripts/grasp/isaaclab_eval.py --policy oracle --mode eval --num_envs 4
 | 32/8 | 15.1 | 9.5 |
 | 16/4 | 16.8 | 12.9 |
 
-（以上各跑 2 步，第一批規劃的暖機佔比偏高；穩定狀態的數字見下。）
+（以上各跑 2 步，第一批規劃的暖機佔比偏高。）
+
+**穩定狀態**（grasp 預設 32/8 迭代、CPU 物理、批次規劃、oracle、訓練庫、各跑 8 步）：
+
+| | 環境 | planner server | 吞吐量 | oracle |
+|---|---|---|---|---|
+| 一開始 | 8 | 8 個，一個一個規劃 | 3.0 次嘗試/秒 | 98% |
+| **建議** | **64** | **1 個 `--batch`** | **13.5 次嘗試/秒** | 95% |
+| | 128 | 2 個 `--batch` | 14.3 次嘗試/秒 | 91% |
+
+128 比 64 只快 6%：兩個 server 共用一張 GPU，規劃時間跟環境數成正比（每環境約 16 ms）。500 次迭代（8 步 × 64 環境 = 每次 512 次嘗試）約 5.3 小時。
 
 ## 量測（2026-09-24）
 
