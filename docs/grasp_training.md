@@ -2,7 +2,7 @@
 
 `Isaac-Grasp-Ur5Robotiq-v0`：在圓柱之間把立方體夾起來。設計見 [grasp_rl_plan.md](grasp_rl_plan.md)，這份只講**怎麼跑、跑出來是什麼、還缺什麼**。
 
-狀態（2026-09-24）：**訓練模式與評估模式都可以用**；批次規劃讓一台機器跑到 128 個環境。
+狀態（2026-09-25）：**訓練模式與評估模式都可以用**；批次規劃讓一台機器跑到 128 個環境。**第一次完整訓練已完成**（500 次迭代、5.4 小時）：評估庫上訓練模式 91%、評估模式 86%，見下面的「第一次完整訓練」。
 
 ## 一步是什麼
 
@@ -46,10 +46,15 @@ tensorboard --logdir logs/rsl_rl/grasp
 ## 評估
 
 ```bash
-python scripts/grasp/isaaclab_eval.py --policy logs/rsl_rl/grasp/<run>/model_500.pt --mode eval
+python scripts/grasp/isaaclab_eval.py --policy logs/rsl_rl/grasp/<run>/model_499.pt --mode eval
 python scripts/grasp/isaaclab_eval.py --policy <同一個> --mode train      # 對照：訓練的條件
 python scripts/grasp/isaaclab_eval.py --policy oracle --mode eval --num_envs 4
+python scripts/grasp/isaaclab_eval.py --policy <model_N.pt> --mode train --num_envs 1 --episodes 20 --gui --port 5699   # 開視窗看
 ```
+
+- **`--gui`**：開 Isaac Sim 視窗看 policy 夾（1 個環境比較看得清楚）。訓練進行中也可以拿已存的 checkpoint 來看，只是會跟訓練搶 CPU 與 GPU。
+- **`--port`**：planner server 換一個起始 port。訓練的 server 佔著 5599（`rig.PORT`），同時跑評估不加這個，評估的 server 會綁不到 port 而退出。
+- 最後一個 checkpoint 是 `model_499.pt`（迭代從 0 數），不是 `model_500.pt`。
 
 - **`--mode eval`**：planner 不被告知任何東西。每個 episode 開始時腕部相機掃描（HOME、左、後、右），**地圖從掃描建出來**，每個視角的影像交給 **`grasp/perception.py`**，policy 看到的是它的估計；直線移動**對照地圖**檢查（排除估計立方體周圍的方塊）。每個環境一個建圖的 server、要 render，慢。
 - **`--mode train`**：跟訓練一樣。同一個 policy 兩種模式的差距，就是訓練時的捷徑的代價。
@@ -58,7 +63,7 @@ python scripts/grasp/isaaclab_eval.py --policy oracle --mode eval --num_envs 4
 - 預設每個環境一個 planner server（每個約 2 GB RAM、0.55 GB GPU）；`--num-servers` 可以比環境少，server 會在請求之間換世界。
 - checkpoint 與 tensorboard 在 `logs/rsl_rl/grasp/<時間>_<run-name>/`，每 25 次迭代存一次；`--resume <model_N.pt>` 接著訓。
 - tensorboard 裡除了 reward，還有 `episode/success`、`attempt/<結果>`（規劃不到、IK 失敗、直線移動被拒、夾空、碰到圓柱）、`stuck_total`（回 HOME 失敗、只好瞬移回去的次數，應該一直是 0）。
-- PPO 設定在 `scripts/grasp/lab_rl_cfg.py`：episode 最多 3 步，所以 `gamma` 0.9；每次迭代每環境 8 步、8 個 epoch。**沒調過**，是起點。
+- PPO 設定在 `scripts/grasp/lab_rl_cfg.py`：一次機會時 episode 只有 1 步，`gamma` 幾乎沒作用（0.9 留給調高 `max_attempts` 時）；每次迭代每環境 8 步、8 個 epoch。**沒調過**，第一次完整訓練就是用這組。
 
 ## 感知（`scripts/grasp/perception.py`）
 
@@ -144,7 +149,7 @@ python scripts/grasp/isaaclab_eval.py --policy oracle --mode eval --num_envs 4
 
 **吞吐量**：8 個環境、CPU 物理，每個 env step 約 2.8–3.6 秒，**約 2.5 次嘗試/秒**。一次 PPO 迭代（8 步 × 8 環境 = 64 次嘗試）約 25 秒；500 次迭代約 3.5 小時。
 
-**第一次訓練**（40 次迭代、2560 次嘗試、17 分鐘）：reward 0.80 → 0.82 左右、單次嘗試成功率 0.6–0.77，雜訊大，**還看不出有沒有在學**；動作標準差 0.50 → 0.48。
+**最早的試跑**（先前的設定：三次機會；40 次迭代、2560 次嘗試、17 分鐘）：reward 0.80 → 0.82 左右、單次嘗試成功率 0.6–0.77，雜訊大，**還看不出有沒有在學**；動作標準差 0.50 → 0.48。
 
 ### 為什麼改成一次機會、只用單一夾法可行的配置（已定案）
 
@@ -156,10 +161,48 @@ python scripts/grasp/isaaclab_eval.py --policy oracle --mode eval --num_envs 4
 
 **定案：1 + 2**（上面的「現在的設定」）。3 在上實機前處理。
 
+## 第一次完整訓練（2026-09-24/25）
+
+```bash
+python scripts/grasp/isaaclab_train.py --num_envs 64 --num-servers 1 --batch --run-name first
+```
+
+現在的設定（一次機會、只用單一夾法可行的配置），PPO 用 `lab_rl_cfg.py` 沒調過的預設，500 次迭代（8 步 × 64 環境 = 每次 512 次嘗試，共 256,000 次），**19,430 秒（5.4 小時）**，每次迭代約 39 秒；中途沒有當掉，`stuck_total` 整段是 0。輸出在 `logs/rsl_rl/grasp/2026-09-24_21-34-40_first/`。
+
+**訓練曲線**（訓練庫、訓練模式，每 100 次迭代的平均）：
+
+| 迭代 | 成功 | 規劃不到 | 直線移動被拒 | 夾空 | 碰到圓柱 |
+|---|---|---|---|---|---|
+| 0–99 | 75.2% | 11.5% | 7.8% | 5.3% | 0.4% |
+| 100–199 | 83.6% | 8.8% | 5.2% | 2.3% | 0.3% |
+| 200–299 | 86.2% | 8.1% | 4.2% | 1.4% | 0.4% |
+| 300–399 | 87.6% | 7.4% | 3.7% | 1.0% | 0.4% |
+| 400–499 | 88.8% | 6.7% | 3.3% | 1.0% | 0.4% |
+
+第 0 次迭代 54%（接近隨機），前 100 次漲得最快；**約 200 次之後只剩每 100 次 1–2 個百分點**。最後 25 次平均 89.4%。動作標準差 0.50 → 0.22。剩下的失敗**主要是規劃不到**：還有一些配置選錯了要夾的那一組面。
+
+**評估**（`model_499.pt`、評估庫、各 64 個 episode）：
+
+| | 訓練模式 | 評估模式 |
+|---|---|---|
+| **policy** | **58/64（91%，95% 區間 83–98%）** | **55/64（86%，77–94%）** |
+| 規劃不到 | 5 | 1 |
+| 直線移動被拒（地圖） | 0 | 8 |
+| 夾空 | 1 | 0 |
+| 碰到圓柱 | 0 | 3 |
+| 感知找不到立方體 | — | 0 |
+| oracle（對照，前面量的） | 98% | 79%（38/48） |
+| 花的時間 | 16 秒（8 環境） | 290 秒（4 環境） |
+
+- **評估模式 policy 比 oracle 高**（86% vs 79%）：oracle 對準估計中心，policy 看起來學會了離圓柱遠一點夾，地圖比真的圓柱胖時比較少被拒（64 次裡 8 次，oracle 48 次裡 10 次）。oracle 只量了 48 次，這個比較是粗略的。
+- **訓練模式還比 oracle 低約 7 個百分點**，幾乎都是規劃不到（選錯面）。
+- **評估模式碰到圓柱 3 次**，訓練模式 0 次：應該是地圖不完整的地方（下面第 2、3 點）。上實機前要處理。
+- 成功判定還是寬的（斜夾也算），**policy 可能學了實機上會滑的夾法**（上面的第 3 點）。
+
 ## 還沒做、大規模訓練前要知道的
 
-1. **評估模式比訓練模式低約 20 個百分點（oracle）**：主要是地圖比真的圓柱胖、直線移動被拒。改善方向：更多掃描視角、更細的體素、只對「看得到的」表面加餘量。
-2. **`MoveTo` 不確認有沒有到達**：被擋住時（例如評估時地圖漏了圓柱）仍回報成功。評估模式的 oracle 有 2 次碰到圓柱，就是地圖不夠完整的地方。
+1. **評估模式比訓練模式低**：oracle 約 20 個百分點，第一次完整訓練的 policy 約 5 個百分點（91% → 86%）。主要是地圖比真的圓柱胖、直線移動被拒。改善方向：更多掃描視角、更細的體素、只對「看得到的」表面加餘量。
+2. **`MoveTo` 不確認有沒有到達**：被擋住時（例如評估時地圖漏了圓柱）仍回報成功。評估模式的 oracle 有 2 次碰到圓柱、第一次完整訓練的 policy 64 次裡 3 次，就是地圖不夠完整的地方。
 3. **邊緣圓柱的頂端不在任何視角裡**：地圖在那裡沒有頂部，planner 可能從上方擦過。
 4. **誤差模型是刻意放寬的初值**，實機上要重新量。
 5. **`BatchMotionPlanner` 是 cuRobo 的私有模組**，不會重試（這裡設 2 次嘗試）；升級 cuRobo 時可能要改。
