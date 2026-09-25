@@ -78,6 +78,10 @@ def start_servers(k):
 K = ARGS.num_servers or ARGS.num_envs
 SERVERS = None if ARGS.no_servers else start_servers(K)
 APP = AppLauncher(ARGS).app
+# SimulationApp takes Ctrl-C for itself and exits on the spot, which skips the
+# finally below and leaves the planner servers (their own session, so the
+# terminal's Ctrl-C never reaches them) running. Python's own handler instead.
+signal.signal(signal.SIGINT, signal.default_int_handler)
 
 import gymnasium as gym  # noqa: E402
 import torch  # noqa: E402

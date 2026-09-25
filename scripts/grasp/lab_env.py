@@ -87,6 +87,7 @@ class GraspEnv(CellEnv):
         self.layout = np.zeros(n, dtype=int)
         self.cylinders = [[] for _ in range(n)]
         self.est = [None] * n
+        self.scan_views = [[] for _ in range(n)]    # evaluation: the last scan's views
         self.attempt = np.zeros(n, dtype=int)
         self.last_action = np.zeros((n, T.ACT_DIM))
         self.last_outcome = np.zeros(n, dtype=int)
@@ -152,6 +153,7 @@ class GraspEnv(CellEnv):
                 views[e].append(v)
         boxes = []
         for e in env_ids:
+            self.scan_views[e] = views[e]
             est = P.perceive(views[e])
             if est is None:
                 # Not seen: the policy is told so (visibility 0) and aims at

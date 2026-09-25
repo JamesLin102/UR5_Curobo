@@ -9,6 +9,8 @@ This process runs Isaac Lab ONLY and must never import cuRobo -- see lab/.
 Start planner_server.py first, then:
     python scripts/pick_place/isaaclab_client.py --device cpu
     python scripts/pick_place/isaaclab_client.py --headless --no-mapping
+    python scripts/pick_place/isaaclab_client.py --device cpu --viz   # + point clouds, map
+                                                                      #   in the browser
 
 Several cells at once: one planner server per cell (each holds its own map),
 then the same client with --num_envs. Every cell shuttles its own block,
@@ -48,13 +50,14 @@ import gymnasium as gym  # noqa: E402
 
 from pick_place import demo_loop  # noqa: E402
 from cell_api import ResetOptions  # noqa: E402
+from lab.viz import CellViz  # noqa: E402
 
 
 def say(msg):
     print(f"[demo] {msg}", flush=True)
 
 
-def run_many(env):
+def run_many(env, viz=None):
     """N cells, one leg each per env step: pick where the block is, place on the goal.
 
     The oracle reads each cell's goal off the task, so a cell whose leg
@@ -85,26 +88,33 @@ def run_many(env):
         say(f"step {step}: " + " ".join(f"{legs[e]['leg']}@{at[e]}" for e in range(n))
             + (f" | delivered in env {done}" if done else "")
             + (f" | {'; '.join(failed)}" if failed else ""))
+        if viz is not None:
+            viz.update(notes=[f"step {step}: {legs[viz.e]['leg']}@{at[viz.e]}"])
 
 
 def main():
     tid, cfg = lab_app.make_env_cfg(ARGS)
     env = gym.make(tid, cfg=cfg)
+    viz = (CellViz(env, ARGS.viz_env, ARGS.viz_port, ARGS.viz_stride, log=say)
+           if ARGS.viz else None)
     if ARGS.num_envs > 1:
         if ARGS.static:
             raise SystemExit("--static drives one cell; leave out --num_envs")
-        run_many(env)
+        run_many(env, viz)
         env.close()
         return
     cell = env.unwrapped.cell.view(0)
     # The map is empty on a fresh server; nothing to clear.
     cell.reset(ResetOptions(block_on=0, clear_map=False, scan=True))
+    if viz is not None:
+        viz.update(notes=["after the start-up scan"])
 
     demo_loop.banner(cell, body_path=lambda name: f"/World/envs/env_0/{name}")
+    update = None if viz is None else viz.update
     if ARGS.static:
-        demo_loop.static_loop(cell)
+        demo_loop.static_loop(cell, on_cycle=update)
     else:
-        demo_loop.run_forever(cell)
+        demo_loop.run_forever(cell, on_cycle=update)
     env.close()
 
 

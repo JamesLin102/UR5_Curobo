@@ -17,8 +17,9 @@ Two operations, framed by scripts/proto.py:
 
 Plus "scene" (the handshake), "ik" (one pose, for the last few centimetres of
 a grasp), "reset_map" (forget everything fused, for a new episode) and
-"stats" (frames, voxels, per watched volume). planner_client.Planner speaks
-all of them.
+"stats" (frames, voxels, per watched volume) and "voxels" (the occupied voxel
+centres themselves, for cloud_viewer). planner_client.Planner speaks all of
+them.
 
 Run:
     python scripts/planner_server.py --robot ur5_robotiq
@@ -1278,6 +1279,17 @@ def serve(conn, args, scene, planner, kin, tool_frame, approach_ik, mapping,
                                     "voxels": mapping.occupied,
                                     "on_robot": mapping.self_hits,
                                     "watch": mapping.watch_counts})
+
+            elif op == "voxels":
+                # The occupied voxels, as of the last ESDF refresh: what the
+                # planner avoids. For looking at (cloud_viewer), not planning.
+                if mapping is None or mapping.voxel_centers is None:
+                    send_msg(conn, {"ok": True, "mapping": mapping is not None, "n": 0})
+                else:
+                    c = mapping.voxel_centers.cpu().numpy().astype(np.float32)
+                    send_msg(conn, {"ok": True, "mapping": True, "n": int(len(c)),
+                                    "size": float(scene.mapper["voxel_size"])},
+                             np.ascontiguousarray(c).tobytes())
 
             elif op == "map":
                 if mapping is None:

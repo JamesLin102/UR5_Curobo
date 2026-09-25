@@ -3,6 +3,7 @@
     python scripts/grasp/isaaclab_eval.py --policy logs/rsl_rl/grasp/<run>/model_500.pt
     python scripts/grasp/isaaclab_eval.py --policy oracle --mode eval --num_envs 4
     python scripts/grasp/isaaclab_eval.py --policy random --episodes 200
+    python scripts/grasp/isaaclab_eval.py --policy <model_N.pt> --num_envs 1 --viz
     python scripts/grasp/isaaclab_eval.py --policy <model_N.pt> --mode train --num_envs 1 --gui --port 5699
 
 --mode train: as training runs -- the planner told each environment's
@@ -35,6 +36,8 @@ sys.path.insert(0, SCRIPTS)
 
 from isaaclab.app import AppLauncher  # noqa: E402
 
+from lab import viz as lab_viz  # noqa: E402  (needs nothing from Isaac)
+
 ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
 ap.add_argument("--policy", default="oracle", help="oracle, random, or a model_N.pt checkpoint")
 ap.add_argument("--mode", choices=("train", "eval"), default="eval")
@@ -47,6 +50,7 @@ ap.add_argument("--rl-device", default="cuda:0")
 ap.add_argument("--port", type=int, default=None,
                 help="first planner server port (default rig.PORT); another one while training runs")
 ap.add_argument("--gui", action="store_true", help="open the Isaac Sim window to watch (a few envs)")
+lab_viz.add_args(ap)
 AppLauncher.add_app_launcher_args(ap)
 ARGS = ap.parse_args()
 ARGS.headless = not ARGS.gui
@@ -80,7 +84,12 @@ def start_servers(k):
 
 
 SERVERS = None if ARGS.no_servers else start_servers(ARGS.num_envs)
+lab_viz.preload(ARGS)
 APP = AppLauncher(ARGS).app
+# SimulationApp takes Ctrl-C for itself and exits on the spot, which skips the
+# finally below and leaves the planner servers (their own session, so the
+# terminal's Ctrl-C never reaches them) running. Python's own handler instead.
+signal.signal(signal.SIGINT, signal.default_int_handler)
 
 import gymnasium as gym  # noqa: E402
 import numpy as np  # noqa: E402
@@ -89,6 +98,7 @@ from isaaclab_tasks.utils.parse_cfg import parse_env_cfg  # noqa: E402
 
 import lab  # noqa: E402,F401
 from grasp import task as T  # noqa: E402
+from grasp import viz as grasp_viz  # noqa: E402
 from lab.tasks import task_id  # noqa: E402
 
 
@@ -127,6 +137,23 @@ def make_policy(env):
     return act
 
 
+def show(viz, u, extras=None):
+    """The viewer on --viz-env: the scan and the estimate the next attempt will use."""
+    e = viz.e
+    notes = []
+    if extras is not None:
+        a = extras["attempt"][e]
+        notes.append(f"last attempt: {a['outcome']}{' -- lifted' if a['success'] else ''} "
+                     f"(the view is the next episode's)")
+    views = u.scan_views[e]
+    lines = viz.update(views=views or None,
+                       labels=[f"scan{i}" for i in range(len(views))] if views else None,
+                       notes=notes)
+    cube = u._cube_xyyaw(u.cell.observe([e]).objects[u.cube_name][0])
+    lines += grasp_viz.show_estimate(viz.viewer, u.est[e], cube, u.cylinders[e])
+    viz.viewer.set_status("  \n".join(lines))
+
+
 def main():
     tid = task_id("Grasp", "ur5_robotiq")
     cfg = parse_env_cfg(tid, device=ARGS.device, num_envs=ARGS.num_envs)
@@ -140,6 +167,10 @@ def main():
     log(f"{tid}: {ARGS.num_envs} envs, mode {ARGS.mode}, bank {ARGS.bank}, policy {ARGS.policy}")
     obs, _ = env.reset(seed=ARGS.seed)
     policy = make_policy(env)
+    viz = lab_viz.CellViz(env, ARGS.viz_env, ARGS.viz_port, ARGS.viz_stride, log=log) \
+        if ARGS.viz else None
+    if viz is not None:
+        show(viz, u)
 
     done, ok, contacts, t0 = 0, 0, 0, time.time()
     outcomes = Counter()
@@ -151,6 +182,8 @@ def main():
             if bool(term[e]) or bool(trunc[e]):
                 done += 1
                 ok += a["success"]
+        if viz is not None:
+            show(viz, u, extras)
     p = ok / done
     half = 1.96 * math.sqrt(max(p * (1 - p), 1e-9) / done)
     log(f"success {ok}/{done} = {100 * p:.0f}% (95% interval {100 * max(0, p - half):.0f}-"
@@ -158,6 +191,14 @@ def main():
     log(f"attempts: {dict(outcomes)}; contacts {contacts}; returns home teleported {u.stuck}"
         + (f"; cubes perception did not find {u.unseen}" if MAPPING else ""))
     log(f"{time.time() - t0:.0f} s for {done} episodes over {ARGS.num_envs} envs")
+    if viz is not None:
+        log(f"the viewer stays up at {viz.viewer.url}; Ctrl-C to quit")
+        try:
+            while True:
+                time.sleep(1.0)
+        except KeyboardInterrupt:
+            pass
+        viz.close()
     env.close()
     return True
 

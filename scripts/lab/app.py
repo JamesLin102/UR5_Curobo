@@ -15,6 +15,7 @@ from isaaclab.app import AppLauncher
 import scenes
 from rig import DEFAULT_ROBOT, ROBOTS
 
+from . import viz
 from .tasks import TASKS, task_id
 
 
@@ -44,6 +45,7 @@ def add_args(ap, task="PickPlace"):
                     help="also merge fixed links WITH mass (Isaac Lab's default import)")
     ap.add_argument("--force-usd", action="store_true",
                     help="reconvert the URDF even if the cached USD looks current")
+    viz.add_args(ap)
     AppLauncher.add_app_launcher_args(ap)
 
 
@@ -51,6 +53,7 @@ def launch(args):
     """Start the simulator. Mapping needs cameras, and cameras need rendering."""
     if not args.no_mapping:
         args.enable_cameras = True
+    viz.preload(args)
     return AppLauncher(args).app
 
 

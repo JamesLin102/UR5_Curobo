@@ -36,6 +36,8 @@ import numpy as np
 from scipy import ndimage
 from scipy.spatial import ConvexHull
 
+from pointcloud import backproject
+
 from . import scene as G
 from .task import Estimate
 
@@ -68,16 +70,6 @@ class PerceptionCfg:
 class ViewResult:
     cube: Optional[tuple]            # (x, y, yaw, visibility, residual) or None
     cylinders: List[tuple]           # (x, y, points)
-
-
-def backproject(depth, K, pose):
-    """(N, 3) base-frame points and their (N,) flat pixel indices, for readings > 0."""
-    v, u = np.nonzero(depth > 0)
-    z = depth[v, u].astype(np.float64)
-    x = (u + 0.5 - K[0, 2]) / K[0, 0] * z
-    y = (v + 0.5 - K[1, 2]) / K[1, 1] * z
-    pts = np.stack([x, y, z], axis=1) @ pose[:3, :3].T + pose[:3, 3]
-    return pts, v * depth.shape[1] + u, z
 
 
 def _in_box(pts):

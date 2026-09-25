@@ -73,6 +73,10 @@ class PlannerPool:
     def stats(self, env: int) -> dict:
         return {}
 
+    def voxels(self, env: int):
+        """(centres, size) of env's map as the planner has it, or None: no map."""
+        return None
+
 
 class ServerPool(PlannerPool):
     """planner_server.py processes on consecutive ports: env e -> server e % k.
@@ -168,6 +172,9 @@ class ServerPool(PlannerPool):
 
     def stats(self, env):
         return self._client(env).stats()
+
+    def voxels(self, env):
+        return self._client(env).voxels()
 
 
 class NullPool(PlannerPool):

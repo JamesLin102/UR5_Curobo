@@ -61,17 +61,27 @@ def banner(env: CellLike, body_path=lambda name: f"/World/{name}"):
     say("-------------------------------------------------------------")
 
 
-def static_loop(env: CellLike):
-    """Hold HOME and keep stepping, so the cameras can be looked through."""
+def static_loop(env: CellLike, on_cycle=None, every=60):
+    """Hold HOME and keep stepping, so the cameras can be looked through.
+
+    on_cycle(), if given, is called every `every` steps (a viewer's update, say).
+    """
     say("static mode: arm held at HOME, no planning. "
         "Inspect the d435i view, then Ctrl-C or close the window.")
+    step = 0
     while env.running:
         env.command_arm(env.scene.home)
         env.idle(1)
+        step += 1
+        if on_cycle is not None and step % every == 0:
+            on_cycle()
 
 
-def run_forever(env: CellLike):
-    """Shuttle the payload between the first two targets until the app closes."""
+def run_forever(env: CellLike, on_cycle=None):
+    """Shuttle the payload between the first two targets until the app closes.
+
+    on_cycle(), if given, is called after every pick-and-place cycle.
+    """
     pick = env.scene.pick
     say(f"pick-and-place: {list(env.payload)} shuttling between "
         f"{len(env.scene.targets)} pedestals, descend {pick['descend_m']:.3f} m / "
@@ -81,3 +91,5 @@ def run_forever(env: CellLike):
         plan_no += 1
         if pick_place_cycle(env, plan_no, src, dst):
             src, dst = dst, src      # next time, bring it back
+        if on_cycle is not None:
+            on_cycle()

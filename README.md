@@ -235,6 +235,34 @@ from cylinders the map makes fatter than they are.
 `BatchMotionPlanner`, which `--batch` uses, is a private cuRobo module and does
 not retry; a cuRobo upgrade may need changes there.
 
+## Point cloud viewer
+
+`--viz` serves a 3D view of one environment in the browser (viser), next to
+the simulator or with `--headless`, and prints its URL (default
+`http://localhost:8080`):
+
+```bash
+python scripts/pick_place/isaaclab_client.py --device cpu --viz
+python scripts/grasp/isaaclab_eval.py --policy <model_N.pt> --num_envs 1 --viz
+python tools/view_captures.py /tmp/grasp_capture        # saved scans, no simulator
+```
+
+Four layers, each a checkbox:
+
+| layer | shows |
+|---|---|
+| cameras | every view's depth as points (RGB-coloured, else by height) and its frustum; a scan's views overlap where the poses are right |
+| map | the voxels the planner avoids, from the planner server (`voxels` op), in magenta |
+| perception | grasp: the estimated cube and cylinders (yellow) against the truth (green, blue), and the volume perception looks in |
+| reference | the scene: obstacles, keep-out volumes, simulator-only bodies where they stand, the payload, the targets |
+
+It updates after every pick-and-place cycle, env step or scan, not
+continuously; `--viz-env N` picks the environment, `--viz-stride` the
+point density (every 4th pixel each way by default). `grasp_capture.py`
+saves the scans `view_captures.py` reads. The viewer itself
+(`scripts/cloud_viewer.py`) needs no simulator, so it takes a real camera's
+views the same way.
+
 ## Use it from code
 
 As any Isaac Lab task: start the app first, then make the environment from its
@@ -279,22 +307,26 @@ scripts/
   cell_api.py           the cell contract: config, results, primitives, ops
   legs.py               one grip as ops: above, down, grip, up
   urdf_frames.py        frame arithmetic read off the URDF
+  pointcloud.py         depth images to points
+  cloud_viewer.py       the browser viewer (viser): cameras, map, perception, reference
   rig.py                robots (arm + gripper settings), timing, port, cuRobo pin
   scenes/               the scene contract (base.py) and registry
 
   ── the backend ──
   lab/                  Isaac Lab: robots, scene, cell (N envs), programs,
-                        planner pool, USD edits, CellEnv, the task registry
+                        planner pool, USD edits, CellEnv, the task registry,
+                        viz (the viewer on a live cell)
 
   ── examples, one folder each ──
   pick_place/           scene, task (simulator-free), lab_env (the task),
                         isaaclab_client + demo_loop (the demo)
-  grasp/                scene, task, perception (all simulator-free), lab_env,
+  grasp/                scene, task, perception, viz (all simulator-free), lab_env,
                         lab_rl_cfg, isaaclab_train, isaaclab_eval, layouts/
 configs/                cuRobo robot config (generated)
 assets/robot/           the robot description, one folder per device
-tools/                  checks, and the builders for the robot model, the grasp
-                        layout banks and the grasp scan poses
+tools/                  checks, the builders for the robot model, the grasp
+                        layout banks and the grasp scan poses, and the viewer
+                        for saved scans
 ```
 
 Dependencies point one way: an example → the backend → the shared modules.

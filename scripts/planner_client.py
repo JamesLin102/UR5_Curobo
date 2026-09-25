@@ -190,6 +190,20 @@ class Planner:
         header, _ = recv_msg(self.sock)
         return bool(header.get("ok"))
 
+    def voxels(self):
+        """((N, 3) float32 occupied voxel centres, voxel size in m), or None.
+
+        As of the last ESDF refresh, like stats(). None from a server started
+        with --no-mapping; an empty array from one that has mapped nothing yet.
+        """
+        send_msg(self.sock, {"op": "voxels"})
+        header, payload = recv_msg(self.sock)
+        if not header.get("mapping"):
+            return None
+        n = int(header.get("n", 0))
+        centers = np.frombuffer(payload, dtype=np.float32).reshape(n, 3)
+        return centers, float(header.get("size", 0.0))
+
     def stats(self):
         """What the map holds right now: frames, voxels, per watched volume.
 
