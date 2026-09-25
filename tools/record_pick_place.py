@@ -18,16 +18,14 @@ while it records, to watch.
 
 import argparse
 import os
-import signal
-import subprocess
 import sys
-import tempfile
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
+import planner_servers  # noqa: E402
 from lab import app as lab_app  # noqa: E402
 
 ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -49,25 +47,9 @@ def say(msg):
     print(f"[record] {msg}", flush=True)
 
 
-def start_server():
-    log = os.path.join(tempfile.gettempdir(), f"record_pick_place_server_{os.getpid()}.log")
-    proc = subprocess.Popen([sys.executable, "-u", os.path.join(ROOT, "scripts", "planner_server.py"),
-                             "--scene", ARGS.scene], stdout=open(log, "w"),
-                            stderr=subprocess.STDOUT, cwd=ROOT, start_new_session=True)
-    deadline = time.time() + 600
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            raise SystemExit(f"planner server exited; see {log}")
-        if "listening" in open(log).read():
-            return proc
-        time.sleep(1)
-    raise SystemExit(f"planner server did not start; see {log}")
-
-
 os.makedirs(ARGS.out, exist_ok=True)
-SERVER = None if ARGS.no_server else start_server()
+SERVER = None if ARGS.no_server else planner_servers.launch(1, "--scene", ARGS.scene)
 APP = lab_app.launch(ARGS)
-signal.signal(signal.SIGINT, signal.default_int_handler)   # see grasp/isaaclab_eval.py
 
 import gymnasium as gym  # noqa: E402
 
@@ -115,11 +97,7 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
     finally:
-        if SERVER is not None and SERVER.poll() is None:
-            os.killpg(SERVER.pid, signal.SIGINT)
-            try:
-                SERVER.wait(30)
-            except subprocess.TimeoutExpired:
-                os.killpg(SERVER.pid, signal.SIGKILL)
+        if SERVER is not None:
+            SERVER.stop()
         sys.stdout.flush()
         os._exit(0 if ok else 1)

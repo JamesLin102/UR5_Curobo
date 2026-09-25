@@ -18,10 +18,7 @@ attempt came to in there as well.
 
 import argparse
 import os
-import signal
-import subprocess
 import sys
-import tempfile
 import time
 from datetime import datetime
 
@@ -30,6 +27,9 @@ ROOT = os.path.dirname(SCRIPTS)
 sys.path.insert(0, SCRIPTS)
 
 from isaaclab.app import AppLauncher  # noqa: E402
+
+import planner_servers  # noqa: E402
+from lab import app as lab_app  # noqa: E402
 
 ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
 ap.add_argument("--num_envs", type=int, default=8)
@@ -57,34 +57,13 @@ def log(msg):
     print(f"[train] {msg}", flush=True)
 
 
-def start_servers(k):
-    logfile = os.path.join(tempfile.gettempdir(), f"grasp_train_servers_{os.getpid()}.log")
-    extra = ["--batch", str(-(-ARGS.num_envs // k))] if ARGS.batch else []
-    proc = subprocess.Popen(
-        [sys.executable, "-u", os.path.join(SCRIPTS, "planner_servers.py"), "--num", str(k),
-         "--scene", "grasp", "--no-mapping"] + extra,
-        stdout=open(logfile, "w"), stderr=subprocess.STDOUT, cwd=ROOT, start_new_session=True)
-    deadline = time.time() + 900
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            raise SystemExit(f"planner servers exited; see {logfile}")
-        if "[servers] all" in open(logfile).read():
-            log(f"{k} planner server(s) up; log {logfile}")
-            return proc
-        time.sleep(1)
-    raise SystemExit(f"planner servers did not start; see {logfile}")
-
-
 K = ARGS.num_servers or ARGS.num_envs
-SERVERS = None if ARGS.no_servers else start_servers(K)
-APP = AppLauncher(ARGS).app
-# SimulationApp takes Ctrl-C for itself and exits on the spot, which skips the
-# finally below and leaves the planner servers (their own session, so the
-# terminal's Ctrl-C never reaches them) running. Python's own handler instead.
-signal.signal(signal.SIGINT, signal.default_int_handler)
+BATCH = ["--batch", str(-(-ARGS.num_envs // K))] if ARGS.batch else []
+SERVERS = None if ARGS.no_servers else \
+    planner_servers.launch(K, "--scene", "grasp", "--no-mapping", *BATCH, log=log)
+APP = lab_app.launch(ARGS)
 
 import gymnasium as gym  # noqa: E402
-import torch  # noqa: E402
 from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper, handle_deprecated_rsl_rl_cfg  # noqa: E402
 from isaaclab_tasks.utils.parse_cfg import parse_env_cfg  # noqa: E402
 from rsl_rl.runners import OnPolicyRunner  # noqa: E402
@@ -144,11 +123,7 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
     finally:
-        if SERVERS is not None and SERVERS.poll() is None:
-            os.killpg(SERVERS.pid, signal.SIGINT)
-            try:
-                SERVERS.wait(40)
-            except subprocess.TimeoutExpired:
-                os.killpg(SERVERS.pid, signal.SIGKILL)
+        if SERVERS is not None:
+            SERVERS.stop()
         sys.stdout.flush()
         os._exit(0 if ok else 1)

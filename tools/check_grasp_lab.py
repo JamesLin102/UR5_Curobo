@@ -25,16 +25,15 @@ are counted separately; tools/grasp_reach.py says which those are and why.
 import argparse
 import math
 import os
-import signal
-import subprocess
 import sys
-import tempfile
-import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
 from isaaclab.app import AppLauncher  # noqa: E402
+
+import planner_servers  # noqa: E402
+from lab import app as lab_app  # noqa: E402
 
 ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
 ap.add_argument("--trials", type=int, default=20)
@@ -50,33 +49,8 @@ def log(msg):
     print(f"[grasp] {msg}", flush=True)
 
 
-def start_server():
-    logfile = os.path.join(tempfile.gettempdir(), "check_grasp_server.log")
-    out = open(logfile, "w")
-    proc = subprocess.Popen([sys.executable, "-u", os.path.join(ROOT, "scripts", "planner_servers.py"),
-                             "--num", "1", "--scene", "grasp", "--no-mapping"],
-                            stdout=out, stderr=subprocess.STDOUT, cwd=ROOT, start_new_session=True)
-    deadline = time.time() + 900
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            raise SystemExit(f"planner server exited; see {logfile}")
-        if "[servers] all" in open(logfile).read():
-            return proc
-        time.sleep(1)
-    raise SystemExit(f"planner server did not start; see {logfile}")
-
-
-def stop_server(proc):
-    if proc.poll() is None:
-        os.killpg(proc.pid, signal.SIGINT)
-        try:
-            proc.wait(40)
-        except subprocess.TimeoutExpired:
-            os.killpg(proc.pid, signal.SIGKILL)
-
-
-SERVER = start_server()
-APP = AppLauncher(ARGS).app
+SERVER = planner_servers.launch(1, "--scene", "grasp", "--no-mapping")
+APP = lab_app.launch(ARGS)
 
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
@@ -180,6 +154,6 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
     finally:
-        stop_server(SERVER)
+        SERVER.stop()
         sys.stdout.flush()
         os._exit(0 if ok else 1)

@@ -24,10 +24,7 @@ return home was a teleport, and the wrapper accepts the env.
 
 import argparse
 import os
-import signal
-import subprocess
 import sys
-import tempfile
 import time
 from collections import Counter
 
@@ -35,6 +32,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
 from isaaclab.app import AppLauncher  # noqa: E402
+
+import planner_servers  # noqa: E402
+from lab import app as lab_app  # noqa: E402
 
 ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
 ap.add_argument("--num-envs", type=int, default=4)
@@ -63,49 +63,19 @@ def log(msg):
     print(f"[grasp-env] {msg}", flush=True)
 
 
-def start_servers(k):
-    logfile = os.path.join(tempfile.gettempdir(), "check_grasp_env_servers.log")
-    extra = ["--batch", str(-(-ARGS.num_envs // k))] if ARGS.batch else []
-    proc = subprocess.Popen(
-        [sys.executable, "-u", os.path.join(ROOT, "scripts", "planner_servers.py"),
-         "--num", str(k), "--scene", "grasp", "--no-mapping"] + extra,
-        stdout=open(logfile, "w"), stderr=subprocess.STDOUT, cwd=ROOT, start_new_session=True)
-    deadline = time.time() + 900
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            raise SystemExit(f"planner servers exited; see {logfile}")
-        if "[servers] all" in open(logfile).read():
-            return proc, logfile
-        time.sleep(1)
-    raise SystemExit(f"planner servers did not start; see {logfile}")
-
-
 K = ARGS.num_servers or ARGS.num_envs
-SERVERS, SERVER_LOG = start_servers(K)
-APP = AppLauncher(ARGS).app
+BATCH = ["--batch", str(-(-ARGS.num_envs // K))] if ARGS.batch else []
+SERVERS = planner_servers.launch(K, "--scene", "grasp", "--no-mapping", *BATCH, log=log)
+APP = lab_app.launch(ARGS)
 
 import gymnasium as gym  # noqa: E402
 import numpy as np  # noqa: E402
-import torch  # noqa: E402
 from isaaclab_tasks.utils.parse_cfg import parse_env_cfg  # noqa: E402
 
 import lab  # noqa: E402,F401  (registers the ids)
+from grasp import lab_policy  # noqa: E402
 from grasp import task as T  # noqa: E402
 from lab.tasks import task_id  # noqa: E402
-
-
-def oracle(env):
-    """The grip an oracle picks per env: the face the bank says works, at the estimate."""
-    u = env.unwrapped
-    acts = []
-    for e in range(u.num_envs):
-        feas = u.bank.usable(u.task)[u.layout[e]]
-        face = 0 if feas[0] else 1
-        # A second try goes to the other face, if that one works too.
-        if u.attempt[e] > 0 and feas.all():
-            face = int(u.attempt[e] % 2 == 1) ^ face
-        acts.append(T.oracle_action(u.est[e].cube[2], face))
-    return torch.tensor(np.array(acts), dtype=torch.float32, device=u.device)
 
 
 def main():
@@ -126,6 +96,7 @@ def main():
     u = env.unwrapped
     log(f"{tid}: {u.num_envs} envs, {K} planner server(s), bank {ARGS.bank} "
         f"({len(u.bank)} layouts), built in {time.time() - t0:.0f} s")
+    act = lab_policy.make(env, ARGS.policy, log=log)
     env.reset(seed=ARGS.seed)
 
     episodes, first_try, successes, steps = 0, 0, 0, 0
@@ -134,9 +105,7 @@ def main():
     step_times = []
     while episodes < ARGS.episodes:
         t = time.time()
-        act = oracle(env) if ARGS.policy == "oracle" else \
-            torch.rand((u.num_envs, T.ACT_DIM), device=u.device) * 2 - 1
-        _, rew, term, trunc, extras = env.step(act)
+        _, rew, term, trunc, extras = env.step(act(None))
         step_times.append(time.time() - t)
         steps += 1
         for e, a in enumerate(extras["attempt"]):
@@ -167,7 +136,7 @@ def main():
         f"(write {1000 * prof['tick.write'] / max(prof['ticks'], 1):.1f}, "
         f"step {1000 * prof['tick.step'] / max(prof['ticks'], 1):.1f}, "
         f"read {1000 * prof['tick.read'] / max(prof['ticks'], 1):.1f})")
-    log(f"oracle: {successes}/{episodes} episodes succeeded ({100 * successes / episodes:.0f}%), "
+    log(f"{ARGS.policy}: {successes}/{episodes} episodes succeeded ({100 * successes / episodes:.0f}%), "
         f"{first_try} on the first attempt")
     log(f"attempts: {dict(outcomes)}; contacts {contacts}; returns home teleported {u.stuck}")
     if held:
@@ -201,11 +170,6 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
     finally:
-        if SERVERS.poll() is None:
-            os.killpg(SERVERS.pid, signal.SIGINT)
-            try:
-                SERVERS.wait(40)
-            except subprocess.TimeoutExpired:
-                os.killpg(SERVERS.pid, signal.SIGKILL)
+        SERVERS.stop()
         sys.stdout.flush()
         os._exit(0 if ok else 1)

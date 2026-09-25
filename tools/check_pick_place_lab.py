@@ -34,8 +34,6 @@ must be free.
 import argparse
 import os
 import re
-import signal
-import socket
 import subprocess
 import sys
 import tempfile
@@ -43,18 +41,14 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
-from rig import DEFAULT_ROBOT, HOST, PORT  # noqa: E402
+import planner_servers  # noqa: E402
+from rig import DEFAULT_ROBOT, PORT  # noqa: E402
 
 BOUND_MM = -10.0
 
 
 def log(msg):
     print(f"[check-lab] {msg}", flush=True)
-
-
-def tail(path, n=25):
-    with open(path) as f:
-        return "".join(f.readlines()[-n:])
 
 
 def gaps(info):
@@ -66,9 +60,9 @@ def gaps(info):
 
 def run_mode(args, mapping):
     """Run the oracle episodes in every environment. Returns failure strings."""
-    from isaaclab.app import AppLauncher
+    from lab import app as lab_app
 
-    AppLauncher(dict(headless=True, enable_cameras=mapping, device=args.device))
+    lab_app.launch(dict(headless=True, device=args.device), cameras=mapping)
 
     import gymnasium as gym
     import torch
@@ -181,54 +175,19 @@ def check_rl_wrapper(env, n):
 # --- parent: servers and child processes ----------------------------------------
 
 
-def ports_taken(k):
-    taken = []
-    for i in range(k):
-        with socket.socket() as s:
-            if s.connect_ex((HOST, PORT + i)) == 0:
-                taken.append(PORT + i)
-    return taken
-
-
-def start_servers(k, mapping, logfile):
-    """scripts/planner_servers.py with k servers. (proc, error or None)."""
-    cmd = [sys.executable, "-u", os.path.join(ROOT, "scripts", "planner_servers.py"),
-           "--num", str(k)] + ([] if mapping else ["--no-mapping"])
-    out = open(logfile, "w")
-    proc = subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT, cwd=ROOT,
-                            start_new_session=True)
-    deadline = time.time() + 900
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            return proc, "exited"
-        with open(logfile) as f:
-            text = f.read()
-        if "[servers] all" in text:
-            return proc, None
-        time.sleep(1)
-    return proc, "did not start listening within 900 s"
-
-
-def stop_servers(proc):
-    if proc.poll() is None:
-        proc.send_signal(signal.SIGINT)
-        try:
-            proc.wait(40)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-
-
 def check(args, mapping, workdir):
     name = f"mapping {'on' if mapping else 'off'}, {args.num_envs} env(s)"
     k = args.num_servers or args.num_envs
     log(f"=== isaac lab, {name}, {k} planner server(s) ===")
     tag = "on" if mapping else "off"
     srv_log = os.path.join(workdir, f"servers_{tag}.log")
-    servers, err = start_servers(k, mapping, srv_log)
     try:
-        if err:
-            log(f"FAIL {name}: planner servers {err}\n{tail(srv_log)}")
-            return False
+        servers = planner_servers.launch(k, *([] if mapping else ["--no-mapping"]),
+                                         logfile=srv_log)
+    except planner_servers.ServersFailed as e:
+        log(f"FAIL {name}: {e}")
+        return False
+    try:
         cmd = [sys.executable, "-u", os.path.abspath(__file__), "--child",
                "--mapping", tag, "--device", args.device, "--robot", args.robot,
                "--num-envs", str(args.num_envs), "--num-servers", str(args.num_servers)]
@@ -256,7 +215,7 @@ def check(args, mapping, workdir):
         log(f"FAIL {name}: timed out")
         return False
     finally:
-        stop_servers(servers)
+        servers.stop()
 
 
 def main():
@@ -293,7 +252,7 @@ def main():
         sys.exit("[check-lab] with mapping on every env needs its own server; "
                  "leave --num-servers at 0 or run --mapping off")
     k = args.num_servers or args.num_envs
-    taken = ports_taken(k)
+    taken = planner_servers.ports_taken(k)
     if taken:
         sys.exit(f"[check-lab] ports {taken} are already in use -- stop the running "
                  f"planner server(s) first (ss -ltnp | grep {PORT})")

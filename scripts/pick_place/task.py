@@ -16,8 +16,6 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from cell_api import Observation
-
 
 @dataclass
 class TaskCfg:
@@ -115,18 +113,3 @@ class Scorer:
             np.asarray(holding, dtype=np.float32).reshape(-1, 1),
             self.rest[self.goal[env_ids]],
         ], axis=1).astype(np.float32)
-
-    # --- one cell, from an Observation ---------------------------------------
-
-    def begin_one(self, start, o: Observation):
-        self.begin([0], [start], o.objects[self.block][None, :3])
-
-    def score_one(self, o: Observation, failed, running=True):
-        """score() for env 0, with python scalars out."""
-        s = self.score([0], o.objects[self.block][None, :3], [o.holding],
-                       [failed], running)
-        return {k: v[0].item() for k, v in s.items()}
-
-    def vec_one(self, o: Observation):
-        return self.vec([0], o.q[None], [o.gripper], o.tool_pose[None],
-                        o.objects[self.block][None], [o.holding])[0]

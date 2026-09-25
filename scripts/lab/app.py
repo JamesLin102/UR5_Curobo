@@ -8,7 +8,12 @@
 AppLauncher adds its own flags (--headless, --device, --enable_cameras, ...).
 Choices come from the registries -- rig.ROBOTS, scenes, lab.tasks.TASKS -- so a
 new robot, scene or task shows up here without an edit.
+
+Every entry point starts the simulator through launch(), with these flags or
+its own: it is where the things every Kit process needs are done once.
 """
+
+import signal
 
 from isaaclab.app import AppLauncher
 
@@ -49,12 +54,29 @@ def add_args(ap, task="PickPlace"):
     AppLauncher.add_app_launcher_args(ap)
 
 
-def launch(args):
-    """Start the simulator. Mapping needs cameras, and cameras need rendering."""
-    if not args.no_mapping:
-        args.enable_cameras = True
-    viz.preload(args)
-    return AppLauncher(args).app
+def launch(args, cameras=None):
+    """Start the simulator; returns the app. args: AppLauncher's, as a namespace or a dict.
+
+    cameras: True or False to say; None leaves --enable_cameras as it is,
+    except that with add_args()' flags mapping (no --no-mapping) turns it on --
+    mapping needs cameras, and cameras need rendering. Also, before Kit starts,
+    viser for --viz (viz.preload); and after, Ctrl-C back to Python:
+    SimulationApp takes it and exits on the spot, which skips an entry point's
+    `finally` -- and with it stopping the planner servers, which run in their
+    own session and never see the terminal's Ctrl-C.
+    """
+    if isinstance(args, dict):
+        if cameras is not None:
+            args["enable_cameras"] = cameras
+    else:
+        if cameras is None and hasattr(args, "no_mapping"):
+            cameras = not args.no_mapping or args.enable_cameras
+        if cameras is not None:
+            args.enable_cameras = cameras
+        viz.preload(args)
+    app = AppLauncher(args).app
+    signal.signal(signal.SIGINT, signal.default_int_handler)
+    return app
 
 
 def make_env_cfg(args):

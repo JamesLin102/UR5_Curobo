@@ -22,6 +22,8 @@ sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
 from isaaclab.app import AppLauncher  # noqa: E402
 
+from lab import app as lab_app  # noqa: E402
+
 ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
 ap.add_argument("--out", required=True)
 ap.add_argument("--bank", default="eval")
@@ -34,7 +36,7 @@ ARGS = ap.parse_args()
 ARGS.headless, ARGS.enable_cameras = True, True
 if ARGS.device == "cuda:0" and "--device" not in sys.argv:
     ARGS.device = "cpu"      # the faster at these sizes; --device cuda:0 to override
-APP = AppLauncher(ARGS).app
+APP = lab_app.launch(ARGS)
 
 import numpy as np  # noqa: E402
 

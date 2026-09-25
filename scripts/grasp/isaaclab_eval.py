@@ -1,9 +1,9 @@
 """Evaluate a grasp policy -- or the oracle, or random actions -- on the eval bank.
 
-    python scripts/grasp/isaaclab_eval.py --policy logs/rsl_rl/grasp/<run>/model_500.pt
+    python scripts/grasp/isaaclab_eval.py --policy scripts/grasp/policies/first.pt
     python scripts/grasp/isaaclab_eval.py --policy oracle --mode eval --num_envs 4
     python scripts/grasp/isaaclab_eval.py --policy random --episodes 200
-    python scripts/grasp/isaaclab_eval.py --policy <model_N.pt> --num_envs 1 --viz
+    python scripts/grasp/isaaclab_eval.py --policy scripts/grasp/policies/first.pt --num_envs 1 --viz
     python scripts/grasp/isaaclab_eval.py --policy <model_N.pt> --mode train --num_envs 1 --gui --port 5699
 
 --mode train: as training runs -- the planner told each environment's
@@ -23,10 +23,7 @@ returns home that had to be teleports.
 import argparse
 import math
 import os
-import signal
-import subprocess
 import sys
-import tempfile
 import time
 from collections import Counter
 
@@ -36,6 +33,8 @@ sys.path.insert(0, SCRIPTS)
 
 from isaaclab.app import AppLauncher  # noqa: E402
 
+import planner_servers  # noqa: E402
+from lab import app as lab_app  # noqa: E402
 from lab import viz as lab_viz  # noqa: E402  (needs nothing from Isaac)
 
 ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -65,76 +64,18 @@ def log(msg):
     print(f"[eval] {msg}", flush=True)
 
 
-def start_servers(k):
-    logfile = os.path.join(tempfile.gettempdir(), f"grasp_eval_servers_{os.getpid()}.log")
-    cmd = [sys.executable, "-u", os.path.join(SCRIPTS, "planner_servers.py"), "--num", str(k),
-           "--scene", "grasp"] + ([] if MAPPING else ["--no-mapping"]) \
-        + ([] if ARGS.port is None else ["--port", str(ARGS.port)])
-    proc = subprocess.Popen(cmd, stdout=open(logfile, "w"), stderr=subprocess.STDOUT, cwd=ROOT,
-                            start_new_session=True)
-    deadline = time.time() + 900
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            raise SystemExit(f"planner servers exited; see {logfile}")
-        if "[servers] all" in open(logfile).read():
-            log(f"{k} planner server(s) ({'mapping' if MAPPING else 'told the cylinders'}); log {logfile}")
-            return proc
-        time.sleep(1)
-    raise SystemExit(f"planner servers did not start; see {logfile}")
-
-
-SERVERS = None if ARGS.no_servers else start_servers(ARGS.num_envs)
-lab_viz.preload(ARGS)
-APP = AppLauncher(ARGS).app
-# SimulationApp takes Ctrl-C for itself and exits on the spot, which skips the
-# finally below and leaves the planner servers (their own session, so the
-# terminal's Ctrl-C never reaches them) running. Python's own handler instead.
-signal.signal(signal.SIGINT, signal.default_int_handler)
+SERVERS = None if ARGS.no_servers else planner_servers.launch(
+    ARGS.num_envs, "--scene", "grasp", *([] if MAPPING else ["--no-mapping"]),
+    port=ARGS.port or planner_servers.PORT, log=log)
+APP = lab_app.launch(ARGS)
 
 import gymnasium as gym  # noqa: E402
-import numpy as np  # noqa: E402
-import torch  # noqa: E402
 from isaaclab_tasks.utils.parse_cfg import parse_env_cfg  # noqa: E402
 
 import lab  # noqa: E402,F401
-from grasp import task as T  # noqa: E402
+from grasp import lab_policy  # noqa: E402
 from grasp import viz as grasp_viz  # noqa: E402
 from lab.tasks import task_id  # noqa: E402
-
-
-def make_policy(env):
-    u = env.unwrapped
-    if ARGS.policy == "random":
-        return lambda obs: torch.rand((u.num_envs, T.ACT_DIM), device=u.device) * 2 - 1
-    if ARGS.policy == "oracle":
-        def oracle(obs):
-            acts = []
-            usable = u.bank.usable(u.task)
-            for e in range(u.num_envs):
-                feas = usable[u.layout[e]]
-                face = 0 if feas[0] else 1
-                acts.append(T.oracle_action(u.est[e].cube[2], face))
-            return torch.tensor(np.array(acts), dtype=torch.float32, device=u.device)
-        return oracle
-    import importlib.metadata as md
-
-    from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper, handle_deprecated_rsl_rl_cfg
-    from rsl_rl.runners import OnPolicyRunner
-
-    from grasp.lab_rl_cfg import GraspPPORunnerCfg
-    agent = handle_deprecated_rsl_rl_cfg(GraspPPORunnerCfg(), md.version("rsl-rl-lib"))
-    agent.device = ARGS.rl_device
-    wrapped = RslRlVecEnvWrapper(env, clip_actions=agent.clip_actions)
-    runner = OnPolicyRunner(wrapped, agent.to_dict(), log_dir=None, device=agent.device)
-    runner.load(ARGS.policy)
-    policy = runner.get_inference_policy(device=agent.device)
-    log(f"policy from {ARGS.policy}")
-
-    def act(obs):
-        with torch.inference_mode():
-            # The networks may be on the GPU and the env's physics on the CPU.
-            return policy(wrapped.get_observations().to(agent.device)).to(u.device).clamp(-1, 1)
-    return act
 
 
 def show(viz, u, extras=None):
@@ -166,7 +107,7 @@ def main():
     u = env.unwrapped
     log(f"{tid}: {ARGS.num_envs} envs, mode {ARGS.mode}, bank {ARGS.bank}, policy {ARGS.policy}")
     obs, _ = env.reset(seed=ARGS.seed)
-    policy = make_policy(env)
+    policy = lab_policy.make(env, ARGS.policy, ARGS.rl_device, log=log)
     viz = lab_viz.CellViz(env, ARGS.viz_env, ARGS.viz_port, ARGS.viz_stride, log=log) \
         if ARGS.viz else None
     if viz is not None:
@@ -211,11 +152,7 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
     finally:
-        if SERVERS is not None and SERVERS.poll() is None:
-            os.killpg(SERVERS.pid, signal.SIGINT)
-            try:
-                SERVERS.wait(40)
-            except subprocess.TimeoutExpired:
-                os.killpg(SERVERS.pid, signal.SIGKILL)
+        if SERVERS is not None:
+            SERVERS.stop()
         sys.stdout.flush()
         os._exit(0 if ok else 1)

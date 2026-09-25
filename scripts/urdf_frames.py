@@ -13,15 +13,6 @@ import xml.etree.ElementTree as ET
 import numpy as np
 
 
-# Optical (+Z view, +X right, +Y down) -> ROS body (+X view, +Y left, +Z up),
-# as columns: body X = optical Z, body Y = -optical X, body Z = -optical Y.
-# R_body = R_optical @ this.
-OPTICAL_TO_ROS_BODY = np.array([
-    [0.0, -1.0, 0.0],
-    [0.0, 0.0, -1.0],
-    [1.0, 0.0, 0.0],
-])
-
 
 def gripper_pin_anchors(urdf_path):
     """Pin anchors, per side, in the inner knuckle's and finger tip's frames.

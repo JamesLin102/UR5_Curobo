@@ -159,13 +159,13 @@ def bare_scene():
 
 
 def child(scene_name):
-    from isaaclab.app import AppLauncher
+    from lab import app as lab_app
 
     import scenes
     if scene_name == BARE:
         scenes.register(BARE, bare_scene())
     spec = scenes.load(scene_name)
-    AppLauncher(dict(headless=True, enable_cameras=bool(spec.cameras)))
+    lab_app.launch(dict(headless=True), cameras=bool(spec.cameras))
 
     from lab.tasks.base import CellEnv, CellEnvCfg
 

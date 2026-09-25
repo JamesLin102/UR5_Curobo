@@ -23,7 +23,7 @@ CellCfg.planner_mode, and nothing above this file would change.
 """
 
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Optional, Sequence
+from typing import List, Sequence
 
 import numpy as np
 

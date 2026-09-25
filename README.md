@@ -15,7 +15,7 @@ are — the cameras find them.
 <p align="center">
   <img src="docs/media/grasp.gif" width="800" alt="grasp: the first policy lifting the cube from among three cylinders, twice">
   <br>
-  <sub>grasp, 2× speed: the first policy (<code>model_499.pt</code>) on two crowded
+  <sub>grasp, 2× speed: the first policy (<code>scripts/grasp/policies/first.pt</code>) on two crowded
   layouts it never trained on (evaluation bank rows 51 and 165), as the real arm
   would run it -- the wrist camera's scan, the map, perception's estimate (0.1 mm
   off, yellow against the truth in green), one attempt each.
@@ -204,18 +204,23 @@ to be teleports; should stay 0).
 Evaluate a checkpoint, the oracle or random actions on the evaluation bank:
 
 ```bash
-python scripts/grasp/isaaclab_eval.py --policy logs/rsl_rl/grasp/<run>/model_499.pt --mode eval
-python scripts/grasp/isaaclab_eval.py --policy <same> --mode train --num_envs 8
-python scripts/grasp/isaaclab_eval.py --policy <same> --mode train --num_envs 1 --episodes 20 --gui
+python scripts/grasp/isaaclab_eval.py --policy scripts/grasp/policies/first.pt --mode eval
+python scripts/grasp/isaaclab_eval.py --policy scripts/grasp/policies/first.pt --mode train --num_envs 8
+python scripts/grasp/isaaclab_eval.py --policy logs/rsl_rl/grasp/<run>/model_N.pt --num_envs 1 --episodes 20 --gui
 ```
+
+`scripts/grasp/policies/first.pt` is the first run's last checkpoint (below),
+kept in the repository so the numbers and the video can be reproduced without
+training.
 
 `--gui` opens the window to watch. While a training run holds the default
 port, add `--port 5699` so the evaluation's servers can bind.
 
 **The first run** (2026-09-24/25, 64 envs, 500 iterations, 5.4 h): training
 success rose 54% → 89%, most of it in the first 200 iterations; what is left is
-mostly choosing the wrong pair of faces. `model_499.pt` on the evaluation bank,
-64 episodes each:
+mostly choosing the wrong pair of faces. Its last checkpoint (`model_499.pt`,
+shipped as `scripts/grasp/policies/first.pt`) on the evaluation bank, 64
+episodes each:
 
 | | training mode | evaluation mode |
 |---|---|---|
@@ -254,7 +259,7 @@ the simulator or with `--headless`, and prints its URL (default
 
 ```bash
 python scripts/pick_place/isaaclab_client.py --device cpu --viz
-python scripts/grasp/isaaclab_eval.py --policy <model_N.pt> --num_envs 1 --viz
+python scripts/grasp/isaaclab_eval.py --policy scripts/grasp/policies/first.pt --num_envs 1 --viz
 python tools/view_captures.py /tmp/grasp_capture        # saved scans, no simulator
 ```
 
@@ -315,9 +320,9 @@ scene, mapping, cameras, markers, depth lag, planner mode.
 scripts/
   ── shared, whatever the example ──
   planner_server.py     cuRobo: planning + live mapping, on a local socket
-  planner_servers.py    N of them on consecutive ports
+  planner_servers.py    N of them on consecutive ports; launch() for other programs
   planner_client.py     its client; needs neither Isaac nor cuRobo
-  cell_api.py           the cell contract: config, results, primitives, ops
+  cell_api.py           the cell contract: reset options, results, primitives, ops
   legs.py               one grip as ops: above, down, grip, up
   urdf_frames.py        frame arithmetic read off the URDF
   pointcloud.py         depth images to points
@@ -334,13 +339,22 @@ scripts/
   pick_place/           scene, task (simulator-free), lab_env (the task),
                         isaaclab_client + demo_loop (the demo)
   grasp/                scene, task, perception, viz (all simulator-free), lab_env,
-                        lab_rl_cfg, isaaclab_train, isaaclab_eval, layouts/
+                        lab_rl_cfg, lab_policy, isaaclab_train, isaaclab_eval,
+                        layouts/ (the layout banks), policies/ (a trained checkpoint)
 configs/                cuRobo robot config (generated)
 assets/robot/           the robot description, one folder per device
-tools/                  checks, the builders for the robot model, the grasp
-                        layout banks and the grasp scan poses, and the viewer
-                        for saved scans
+tools/                  checks, builders, grasp data, videos (below)
 ```
+
+`tools/`, by what each is for. The checks start their own planner servers and
+end with `PASS` / `ALL PASSED`; everything else says in its docstring how to run it.
+
+| for | tools |
+|---|---|
+| checking it works | `check_robot_cfg.py` (cuRobo only), `check_lab_modularity.py` (import rules, registry, every scene builds), `check_pick_place_lab.py`, `check_grasp_lab.py` (physics: the gripper lifts the cube), `check_grasp_env.py` (the gym env with the oracle), `check_grasp_perception.py` (perception against the truth, on saved scans) |
+| rebuilding the robot | `build_ur5_robotiq_urdf.py` (the URDF from the upstream description), `build_ur5_robotiq_config.py` (cuRobo's config from the URDF) |
+| rebuilding grasp's data | `grasp_layout_bank.py` (the layout banks; uses `grasp_reach.py`), `grasp_scan_poses.py` (HOME and the scan poses), `grasp_capture.py` (save scans with the truth) |
+| looking and recording | `view_captures.py` (saved scans in the browser), `record_pick_place.py`, `record_grasp.py` (the videos above; both on `recording.py`) |
 
 Dependencies point one way: an example → the backend → the shared modules.
 Inside an example, files named `lab_*` / `isaaclab_*` are the Isaac Lab side

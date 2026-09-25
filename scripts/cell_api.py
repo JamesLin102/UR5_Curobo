@@ -22,9 +22,6 @@ from typing import Any, Dict, List, Optional, Protocol, Sequence, Tuple
 
 import numpy as np
 
-import scenes
-from rig import DEFAULT_ROBOT
-
 
 # --- configuration and results -------------------------------------------------
 
@@ -42,17 +39,6 @@ GRIP_EXTRA_STEPS = 6       # added to the stroke's own open/close time
 SETTLE_MAX_STEPS = 240     # wait at most this long for the fingers to stop,
 SETTLE_QUIET_STEPS = 12    # "stopped" meaning this many steps in a row
 SETTLE_TOL = 2.0e-4        # each moving less than this, rad
-
-
-@dataclass
-class EnvCfg:
-    scene: str = scenes.DEFAULT
-    robot: str = DEFAULT_ROBOT
-    mapping: bool = True        # False: no cameras, the planner sees the static scene
-    overhead: bool = True       # the fixed camera, on top of the wrist one
-    map_every: int = 6          # fuse a frame every N sim steps while moving
-    depth_lag: int = 2          # sim steps the depth annotator trails the physics by
-    verbose: bool = True
 
 
 @dataclass

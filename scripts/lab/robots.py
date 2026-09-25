@@ -37,9 +37,7 @@ from isaaclab.sim.converters import UrdfConverter
 from isaaclab.sim.spawners.from_files.from_files import _spawn_from_usd_file
 from isaaclab.utils import configclass
 
-from rig import DEFAULT_ROBOT, ROBOTS
-
-from .cell_cfg import CellCfg
+from rig import ROBOTS
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -151,10 +149,3 @@ def make_robot_cfg(robot_key, cell, home=None):
             for name, (joints, k, d) in groups.items()
         },
     )
-
-
-# The Isaac Lab asset-constant idiom, for code that wants the robot on its own
-# in a scene of its own: the default robot with the default CellCfg, arm at
-# zero. A cell builds its robot through make_robot_cfg instead, from the
-# scene's HOME.
-UR5_ROBOTIQ_CFG = make_robot_cfg(DEFAULT_ROBOT, CellCfg())
