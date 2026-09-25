@@ -21,6 +21,10 @@ Layers, each a checkbox in the panel:
               about, the simulator-only bodies where they were put, the
               payload, the targets.
 
+render() draws the same layers into an image without a browser -- numpy and
+PIL, from a mirror of what was sent -- for recording video (tools/
+record_pick_place.py) or a snapshot.
+
 Simulator-free -- numpy, viser and the shared modules -- so the same viewer
 takes views from Isaac Lab or from a real camera. Poses are
 [x, y, z, qw, qx, qy, qz] or 4x4, all in one frame (a cell's own, env-local);
@@ -32,7 +36,7 @@ import math
 import numpy as np
 
 from pointcloud import view_cloud
-from urdf_frames import matrix_to_quat
+from urdf_frames import matrix_to_quat, quat_to_matrix
 
 LAYERS = ("cameras", "map", "perception", "reference")
 
@@ -80,6 +84,22 @@ def _cylinder_edges(radius, height, sections=24):
     return np.array(segs)
 
 
+def _to_world(segments, pose):
+    """(N, 2, 3) segments given in `pose`'s frame, in world coordinates."""
+    wxyz, pos = _pose(pose)
+    R = quat_to_matrix(wxyz)
+    return np.asarray(segments, dtype=np.float64) @ R.T + np.asarray(pos)
+
+
+def _frustum_edges(fov, aspect, scale):
+    """(8, 2, 3) a camera frustum in its optical frame: +z forward, +x right, +y down."""
+    hh = scale * math.tan(fov / 2)
+    hw = hh * aspect
+    c = [np.array([sx * hw, sy * hh, scale]) for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
+    o = np.zeros(3)
+    return np.array([[o, k] for k in c] + [[c[i], c[(i + 1) % 4]] for i in range(4)])
+
+
 def _pose(pose):
     """(wxyz, position) from [x, y, z(, qw, qx, qy, qz)] or a 4x4."""
     p = np.asarray(pose, dtype=np.float64)
@@ -106,42 +126,59 @@ class CloudViewer:
         self.server.initial_camera.look_at = (0.4, 0.0, 0.1)
         self.server.scene.add_grid("/grid", width=2.0, height=2.0, cell_size=0.1,
                                    section_size=0.5, plane="xy")
+        t = np.linspace(-1.0, 1.0, 21)
+        self._grid = np.array([[[v, -1.0, 0.0], [v, 1.0, 0.0]] for v in t]
+                              + [[[-1.0, v, 0.0], [1.0, v, 0.0]] for v in t])
         self.layers = {}
+        self.visible = {name: True for name in LAYERS}
         self.nodes = {name: {} for name in LAYERS}
+        # What each node is, in world coordinates, for render():
+        # ("points", xyz, rgb, size) or ("lines", segments, rgb, width).
+        self.mirror = {name: {} for name in LAYERS}
         for name in LAYERS:
             frame = self.server.scene.add_frame(f"/{name}", show_axes=False)
             box = self.server.gui.add_checkbox(name, True)
-            box.on_update(lambda ev, f=frame, b=box: setattr(f, "visible", b.value))
+            box.on_update(lambda ev, n=name, f=frame, b=box: self._show_layer(n, f, b.value))
             self.layers[name] = frame
         self.status = self.server.gui.add_markdown("")
 
+    def _show_layer(self, name, frame, on):
+        frame.visible = on
+        self.visible[name] = on
+
     # --- primitives: each replaces the node of the same name in its layer ---------
 
-    def _put(self, layer, name, handle):
+    def _put(self, layer, name, handle, mirror=None):
         old = self.nodes[layer].pop(name, None)
         if old is not None and old is not handle:
             old.remove()
         self.nodes[layer][name] = handle
+        self.mirror[layer].pop(name, None)
+        if mirror is not None:
+            self.mirror[layer][name] = mirror
         return handle
 
     def clear(self, layer):
         for handle in self.nodes[layer].values():
             handle.remove()
         self.nodes[layer].clear()
+        self.mirror[layer].clear()
 
     def points(self, layer, name, pts, colors=None, size=None, shape="rounded"):
         pts = np.asarray(pts, dtype=np.float32).reshape(-1, 3)
         colors = height_colors(pts[:, 2]) if colors is None else np.asarray(colors, dtype=np.uint8)
+        size = size or self.point_size
         return self._put(layer, name, self.server.scene.add_point_cloud(
-            f"/{layer}/{name}", pts, colors, point_size=size or self.point_size,
-            point_shape=shape))
+            f"/{layer}/{name}", pts, colors, point_size=size, point_shape=shape),
+            ("points", pts, colors, size))
 
     def lines(self, layer, name, segments, pose=(0, 0, 0), color=GREY, width=2.0):
         """segments (N, 2, 3), in the frame `pose` puts them in."""
         wxyz, pos = _pose(pose)
         return self._put(layer, name, self.server.scene.add_line_segments(
             f"/{layer}/{name}", np.asarray(segments, dtype=np.float32), color,
-            line_width=width, wxyz=wxyz, position=pos))
+            line_width=width, wxyz=wxyz, position=pos),
+            ("lines", _to_world(segments, pose), color, width))
 
     def box(self, layer, name, dims, pose, color=GREY, width=2.0):
         """A box's twelve edges."""
@@ -153,9 +190,15 @@ class CloudViewer:
 
     def axes(self, layer, name, pose, length=0.05):
         wxyz, pos = _pose(pose)
-        return self._put(layer, name, self.server.scene.add_frame(
+        handle = self._put(layer, name, self.server.scene.add_frame(
             f"/{layer}/{name}", axes_length=length, axes_radius=length / 20,
             wxyz=wxyz, position=pos))
+        for i, rgb in enumerate(((220, 40, 40), (40, 180, 40), (40, 80, 220))):
+            tip = np.zeros(3)
+            tip[i] = length
+            self.mirror[layer][f"{name}/{i}"] = ("lines", _to_world([[np.zeros(3), tip]], pose),
+                                                 rgb, 3.0)
+        return handle
 
     def label(self, layer, name, text, position):
         return self._put(layer, name, self.server.scene.add_label(
@@ -182,9 +225,12 @@ class CloudViewer:
             h, w = np.asarray(view["depth"]).shape
             K = np.asarray(view["K"])
             wxyz, pos = _pose(view["pose"])
+            fov = 2 * math.atan(h / 2 / K[1, 1])
             self._put("cameras", f"{tag}/frustum", self.server.scene.add_camera_frustum(
-                f"/cameras/{tag}/frustum", fov=2 * math.atan(h / 2 / K[1, 1]), aspect=w / h,
-                scale=0.06, color=(30, 30, 30), wxyz=wxyz, position=pos))
+                f"/cameras/{tag}/frustum", fov=fov, aspect=w / h,
+                scale=0.06, color=(30, 30, 30), wxyz=wxyz, position=pos),
+                ("lines", _to_world(_frustum_edges(fov, w / h, 0.06), view["pose"]),
+                 (30, 30, 30), 2.0))
         return total
 
     def show_voxels(self, centers, size):
@@ -219,3 +265,75 @@ class CloudViewer:
             self.box("reference", f"payload/{name}", dims, (payload or {}).get(name, pose), GREEN)
         for i, t in enumerate(spec.targets):
             self.axes("reference", f"target/{i}", t, 0.04)
+
+    # --- without a browser ----------------------------------------------------------
+
+    def render(self, eye, look_at, vfov, width, height, up=(0.0, 0.0, 1.0),
+               background=(255, 255, 255)):
+        """(height, width, 3) uint8: the visible layers seen from `eye`, no browser needed.
+
+        A pinhole camera at `eye` looking at `look_at`, vertical field of view
+        `vfov` (rad). Points are squares one point-size across, nearest in front
+        (a depth sort, per pixel); lines go on top, the grid under everything.
+        Close to what the browser shows, not identical: no shading, no labels.
+        """
+        from PIL import Image, ImageDraw
+
+        eye = np.asarray(eye, dtype=np.float64)
+        f = np.asarray(look_at, dtype=np.float64) - eye
+        f /= np.linalg.norm(f)
+        r = np.cross(f, up)
+        r /= np.linalg.norm(r)
+        u = np.cross(r, f)
+        foc = height / 2 / math.tan(vfov / 2)
+        near = 0.05
+
+        def project(p):
+            d = np.asarray(p, dtype=np.float64) - eye
+            z = d @ f
+            zs = np.maximum(z, near)
+            return width / 2 + foc * (d @ r) / zs, height / 2 - foc * (d @ u) / zs, z
+
+        img = Image.new("RGB", (width, height), background)
+        draw = ImageDraw.Draw(img)
+
+        def lines(segs, color, w):
+            segs = np.asarray(segs).reshape(-1, 2, 3)
+            x0, y0, z0 = project(segs[:, 0])
+            x1, y1, z1 = project(segs[:, 1])
+            for k in np.nonzero((z0 > near) & (z1 > near))[0]:
+                draw.line([(x0[k], y0[k]), (x1[k], y1[k])], fill=tuple(int(c) for c in color),
+                          width=max(1, int(round(w))))
+
+        lines(self._grid, (215, 215, 215), 1)
+        items = [m for name in LAYERS if self.visible[name] for m in self.mirror[name].values()]
+
+        # Points: every pixel each square covers, then nearest last so it wins.
+        idx, depth, rgb = [], [], []
+        for kind, xyz, colors, size in (m for m in items if m[0] == "points"):
+            if len(xyz) == 0:
+                continue
+            x, y, z = project(xyz)
+            ok = z > near
+            x, y, z, c = x[ok], y[ok], z[ok], np.asarray(colors)[ok]
+            px = np.clip(np.round(size * foc / z), 2, 12).astype(int)     # 1 px reads as noise
+            for s in np.unique(px):
+                sel = px == s
+                offs = np.arange(s) - (s - 1) // 2
+                ox, oy = (a.ravel() for a in np.meshgrid(offs, offs))
+                xi = (np.round(x[sel])[:, None] + ox).astype(int).ravel()
+                yi = (np.round(y[sel])[:, None] + oy).astype(int).ravel()
+                inside = (xi >= 0) & (xi < width) & (yi >= 0) & (yi < height)
+                idx.append((yi * width + xi)[inside])
+                depth.append(np.repeat(z[sel], len(ox))[inside])
+                rgb.append(np.repeat(c[sel], len(ox), axis=0)[inside])
+        out = np.asarray(img).copy()
+        if idx:
+            idx, depth, rgb = np.concatenate(idx), np.concatenate(depth), np.concatenate(rgb)
+            order = np.argsort(-depth, kind="stable")
+            out.reshape(-1, 3)[idx[order]] = rgb[order]
+        img = Image.fromarray(out)
+        draw = ImageDraw.Draw(img)
+        for kind, segs, color, w in (m for m in items if m[0] == "lines"):
+            lines(segs, color, w)
+        return np.asarray(img)

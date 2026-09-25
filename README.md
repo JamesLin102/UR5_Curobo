@@ -5,10 +5,21 @@ grasping task to train with RL.** The planner is never told where the obstacles
 are — the cameras find them.
 
 <p align="center">
-  <img src="docs/media/pick_place.gif" width="720" alt="pick_place: two round trips past the slab">
+  <img src="docs/media/pick_place.gif" width="800" alt="pick_place: two round trips past the slab, Isaac Lab beside the point cloud view">
   <br>
-  <sub>pick_place, two round trips, 2× speed (recorded on the former Isaac Sim
-  backend). <a href="docs/media/pick_place.mp4">Full quality, real time (MP4)</a></sub>
+  <sub>pick_place, two round trips, 2× speed. Left: Isaac Lab. Right: what the
+  cameras saw (points) and the map the planner avoids (magenta), from the same
+  viewpoint. <a href="docs/media/pick_place.mp4">Real time (MP4)</a></sub>
+</p>
+
+<p align="center">
+  <img src="docs/media/grasp.gif" width="800" alt="grasp: the first policy lifting the cube from among three cylinders, twice">
+  <br>
+  <sub>grasp, 2× speed: the first policy (<code>model_499.pt</code>) on two crowded
+  layouts it never trained on (evaluation bank rows 51 and 165), as the real arm
+  would run it -- the wrist camera's scan, the map, perception's estimate (0.1 mm
+  off, yellow against the truth in green), one attempt each.
+  <a href="docs/media/grasp.mp4">Real time (MP4)</a></sub>
 </p>
 
 A UR5 (CB3) with a Robotiq FT 300, Wrist Camera, 2F-85 gripper and a RealSense
@@ -259,7 +270,9 @@ Four layers, each a checkbox:
 It updates after every pick-and-place cycle, env step or scan, not
 continuously; `--viz-env N` picks the environment, `--viz-stride` the
 point density (every 4th pixel each way by default). `grasp_capture.py`
-saves the scans `view_captures.py` reads. The viewer itself
+saves the scans `view_captures.py` reads; `tools/record_pick_place.py` and
+`tools/record_grasp.py` record the videos above, both views side by side
+(`record_grasp.py --dry-run` first, to find layouts the policy lifts). The viewer itself
 (`scripts/cloud_viewer.py`) needs no simulator, so it takes a real camera's
 views the same way.
 

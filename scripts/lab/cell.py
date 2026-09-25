@@ -96,6 +96,9 @@ class LabCell:
         # Rendering is only needed for the cameras, or for a person to watch.
         self._render = self.sim.has_gui() or self.sim.has_rtx_sensors()
         self.steps = 0
+        # Called after every tick, with no arguments: for watching, e.g.
+        # tools/record_pick_place.py grabbing frames. Keep them cheap.
+        self.on_tick = []
         self.goal = [None] * self.num_envs       # last commanded tool pose, env-local
         self.plan_end = [None] * self.num_envs   # joints where the last MoveTo ended (Retrace)
         self.plan_goal = [None] * self.num_envs  # ...and the tool pose it was sent to
@@ -207,6 +210,8 @@ class LabCell:
         self._hist[:, self._hist_at] = self._q
         self._hist_at = (self._hist_at + 1) % self._hist.shape[1]
         self._hist_n = np.minimum(self._hist_n + 1, self._hist.shape[1])
+        for hook in self.on_tick:
+            hook()
 
     def update_cameras(self):
         """The cameras are not in scene.sensors (see scene_cfg.spawn_cell), so
