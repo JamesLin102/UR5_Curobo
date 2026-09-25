@@ -5,9 +5,7 @@
     perception.py       cube and cylinders from the scan's images; numpy and scipy only
     lab_env.py          Isaac Lab gym task, Isaac-Grasp-{Robot}-v0
     lab_rl_cfg.py       PPO (rsl_rl)
-    lab_policy.py       a checkpoint, the oracle or random actions, as obs -> action
-    isaaclab_train.py   training, starting its own planner servers
-    isaaclab_eval.py    a checkpoint, the oracle or random actions, in either mode
+    lab_policy.py       the oracle, registered for --policy oracle
     layouts/            the layout banks (tools/grasp_layout_bank.py)
     policies/first.pt   the first training run's last checkpoint (model_499.pt)
 

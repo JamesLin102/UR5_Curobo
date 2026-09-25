@@ -108,6 +108,8 @@ class PickPlaceEnv(CellEnv):
                         legs=int(s["legs"][e]),
                         block=o.objects[self.scorer.block][e, :3].tolist())
         self.extras["leg"] = self._info
+        self.extras["success"] = [bool(i["success"]) for i in self._info]
+        self.extras["outcome"] = ["failed" if "failed" in i else i["leg"] for i in self._info]
         self._reward = self.to_torch(s["reward"])
         return (self.to_torch(s["terminated"], torch.bool),
                 self.to_torch(s["truncated"], torch.bool))

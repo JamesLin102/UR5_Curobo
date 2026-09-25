@@ -139,8 +139,8 @@ def check_registry():
     for tid in sorted(want):
         report(tid in have, f"registered {tid}")
     for task, entries in sorted(tasks.TASKS.items()):
-        for entry in entries:
-            report(defines(*entry.split(":")), f"{task}: {entry} exists")
+        for key, entry in sorted(entries.items()):
+            report(defines(*entry.split(":")), f"{task}: {key} {entry} exists")
 
 
 # --- builders (one child process per scene) ------------------------------------

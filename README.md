@@ -34,7 +34,9 @@ D435i, in two examples:
   makes every motion. Everything the policy sees is something the real arm has.
 
 Both are registered Isaac Lab tasks (`DirectRLEnv`), one gym id per task per
-robot, and run one cell or many side by side.
+robot, and run one cell or many side by side. `scripts/lab/train.py` and
+`scripts/lab/eval.py` train and evaluate any of them; a new task is a folder
+and a registry entry ([Your own task](#your-own-task)).
 
 | | result |
 |---|---|
@@ -186,12 +188,13 @@ learn (uniform random actions: 45%, an oracle that knows the answer: 98%).
 - Layouts come from banks checked offline to have a grip that works
   (`scripts/grasp/layouts/`, built by `tools/grasp_layout_bank.py`).
 
-Train (starts its own planner servers; 64 environments on one batch-planning
-server is the fastest setting measured, ~13.5 attempts/s):
+Train with the generic trainer (it starts the planner servers the task's
+config needs; 64 environments on one batch-planning server is the fastest
+setting measured, ~13.5 attempts/s):
 
 ```bash
-python scripts/grasp/isaaclab_train.py --smoke --batch      # 2 envs, 3 iterations: does it run
-python scripts/grasp/isaaclab_train.py --num_envs 64 --num-servers 1 --batch --run-name first
+python scripts/lab/train.py --task Grasp --smoke --planner batch     # 2 envs, 3 iterations: does it run
+python scripts/lab/train.py --task Grasp --num_envs 64 --num-servers 1 --planner batch --run-name first
 tensorboard --logdir logs/rsl_rl/grasp
 ```
 
@@ -201,12 +204,13 @@ in `scripts/grasp/lab_rl_cfg.py`, untuned. Besides the reward, tensorboard has
 `episode/success`, `attempt/<outcome>` and `stuck_total` (returns home that had
 to be teleports; should stay 0).
 
-Evaluate a checkpoint, the oracle or random actions on the evaluation bank:
+Evaluate a checkpoint, the oracle or random actions on the evaluation bank --
+`--mapping` for evaluation mode, left out for training's conditions:
 
 ```bash
-python scripts/grasp/isaaclab_eval.py --policy scripts/grasp/policies/first.pt --mode eval
-python scripts/grasp/isaaclab_eval.py --policy scripts/grasp/policies/first.pt --mode train --num_envs 8
-python scripts/grasp/isaaclab_eval.py --policy logs/rsl_rl/grasp/<run>/model_N.pt --num_envs 1 --episodes 20 --gui
+python scripts/lab/eval.py --task Grasp --policy scripts/grasp/policies/first.pt --mapping --set task.bank=eval
+python scripts/lab/eval.py --task Grasp --policy scripts/grasp/policies/first.pt --num_envs 8 --set task.bank=eval
+python scripts/lab/eval.py --task Grasp --policy logs/rsl_rl/grasp/<run>/model_N.pt --num_envs 1 --episodes 20 --gui
 ```
 
 `scripts/grasp/policies/first.pt` is the first run's last checkpoint (below),
@@ -248,8 +252,8 @@ from cylinders the map makes fatter than they are.
 4. **A hardware cell:** something that offers `cell_api`'s primitives on the
    real UR5, 2F-85 and D435i.
 
-`BatchMotionPlanner`, which `--batch` uses, is a private cuRobo module and does
-not retry; a cuRobo upgrade may need changes there.
+`BatchMotionPlanner`, which `--planner batch` uses, is a private cuRobo module
+and does not retry; a cuRobo upgrade may need changes there.
 
 ## Point cloud viewer
 
@@ -259,7 +263,7 @@ the simulator or with `--headless`, and prints its URL (default
 
 ```bash
 python scripts/pick_place/isaaclab_client.py --device cpu --viz
-python scripts/grasp/isaaclab_eval.py --policy scripts/grasp/policies/first.pt --num_envs 1 --viz
+python scripts/lab/eval.py --task Grasp --policy scripts/grasp/policies/first.pt --mapping --num_envs 1 --viz
 python tools/view_captures.py /tmp/grasp_capture        # saved scans, no simulator
 ```
 
@@ -280,6 +284,110 @@ saves the scans `view_captures.py` reads; `tools/record_pick_place.py` and
 (`record_grasp.py --dry-run` first, to find layouts the policy lifts). The viewer itself
 (`scripts/cloud_viewer.py`) needs no simulator, so it takes a real camera's
 views the same way.
+
+## Your own task
+
+A task here is a decision the arm makes, not a motor skill: one env step is a
+whole program -- plan to a pose, go down, grip, come up -- that cuRobo and the
+cell carry out over hundreds of physics steps, avoiding what the planner knows
+or the map holds. The policy picks *where* and *how*; it never sees joint
+torques. That suits choosing grasps, placements or viewpoints, and makes
+steps slow (grasp: ~13.5 a second with 64 environments), so episodes should be
+a few steps long.
+
+**1. A folder for it**, `scripts/<name>/`, with an empty `__init__.py` and:
+
+| file | what goes in it |
+|---|---|
+| `scene.py` | `SCENE = SceneSpec(...)`: the table and fixtures the planner is told about, the bodies only the simulator has, the payload, HOME, scan poses, cameras, mapper settings. `scripts/scenes/base.py` documents every field; `grasp/scene.py` and `pick_place/scene.py` are two worked ones. |
+| `task.py` (optional) | Rewards, observations, sampling -- simulator-free (numpy), so it can be tested alone and run on the real arm. Only files named `lab_*` / `isaaclab_*` may import Isaac; `tools/check_lab_modularity.py` enforces it. |
+| `lab_env.py` | The env: a `CellEnvCfg` and a `CellEnv` subclass (below). |
+| `lab_rl_cfg.py` | A `RslRlOnPolicyRunnerCfg` subclass: PPO settings and `experiment_name` (the log folder). `grasp/lab_rl_cfg.py` is a starting point. |
+
+**2. The env.** The config says the action and observation sizes and which
+scene and planner mode the task wants; the env turns actions into programs of
+`cell_api` ops (`MoveTo`, `MoveZ`, `Grip`, `Idle`, `Scan`, ...) and scores what
+they did. A sketch of the shape -- untested; `pick_place/lab_env.py` (139
+lines) is the working reference, `grasp/lab_env.py` the full one:
+
+```python
+@configclass
+class ReachEnvCfg(CellEnvCfg):
+    action_space = gym.spaces.Box(-1.0, 1.0, shape=(2,), dtype=np.float32)
+    observation_space = 2
+
+    def __post_init__(self):
+        self.cell.scene = "reach"            # scripts/reach/scene.py
+        self.cell.mapping = False            # the planner sees the scene's static world
+
+
+class ReachEnv(CellEnv):
+    cfg: ReachEnvCfg
+
+    @property
+    def max_episode_length(self):
+        return 1                             # one step per episode
+
+    def reset_cells(self, env_ids, options):
+        self.cell.reset(env_ids, [ResetOptions() for _ in env_ids])
+
+    def programs(self, actions):             # one list of ops per environment
+        a = actions.cpu().numpy()
+        return [[MoveTo(tool_pose(0.45 + 0.15 * x, 0.3 * y, 0.2, 0.0))] for x, y in a]
+
+    def _get_dones(self):                    # self.last: each program's ProgramResult
+        self.extras["success"] = [r.ok for r in self.last]
+        self.extras["outcome"] = ["reached" if r.ok else r.why for r in self.last]
+        n = self.num_envs
+        return self.to_torch(np.ones(n), torch.bool), self.to_torch(np.zeros(n), torch.bool)
+
+    def _get_rewards(self):
+        return self.to_torch([float(r.ok) for r in self.last])
+
+    def _get_observations(self):
+        return {"policy": self.to_torch(self.cell.observe(range(self.num_envs)).tool_pose[:, :2])}
+```
+
+`extras["success"]` and `extras["outcome"]` (one per environment, each step)
+are what `lab/eval.py` counts; anything in `extras["log"]` goes to
+tensorboard. Two optional methods feed `--viz`: `viz_views(e)` and
+`viz_draw(viewer, e)` (see `GraspEnv`).
+
+**3. Register it** in `scripts/lab/tasks/__init__.py`:
+
+```python
+"Reach": dict(env="reach.lab_env:ReachEnv",
+              cfg="reach.lab_env:ReachEnvCfg",
+              rsl_rl="reach.lab_rl_cfg:ReachPPORunnerCfg",
+              oracle="reach.lab_policy:oracle_actions"),   # optional: env -> actions
+```
+
+That gives it a gym id per robot (`Isaac-Reach-Ur5Robotiq-v0`), and makes it
+trainable and evaluable:
+
+```bash
+python tools/check_lab_modularity.py                               # imports, registry, the scene builds
+python scripts/lab/eval.py --task Reach --policy random --episodes 8   # does a step run
+python scripts/lab/train.py --task Reach --smoke                   # does learning run
+python scripts/lab/train.py --task Reach --num_envs 64 --num-servers 1 --planner batch
+```
+
+**Worth deciding early**
+
+- **What the planner knows.** `cell.mapping = False` gives it the scene's
+  static world, or each environment's bodies through `self.pool.set_world`
+  (grasp's training mode) -- fast, nothing rendered. `True` makes the cameras
+  map and the planner avoid the map: the real arm's conditions, slower, one
+  planner server per environment. Train one way and evaluate the other
+  (`--mapping`), as grasp does, and the gap is what the shortcut cost.
+- **What the policy may see.** For a policy meant for the real arm, keep its
+  observations to what the arm has -- joints, gripper, perception's output --
+  and give the truth only to the critic (grasp's `"critic"` group).
+- **What is feasible.** Layouts where nothing can work make a noisy reward;
+  grasp checks its offline (`tools/grasp_layout_bank.py`) and samples only
+  layouts with an answer.
+- Any config field can be changed from the command line without a new flag:
+  `--set task.bank=eval cell.map_every=4`.
 
 ## Use it from code
 
@@ -333,13 +441,14 @@ scripts/
   ── the backend ──
   lab/                  Isaac Lab: robots, scene, cell (N envs), programs,
                         planner pool, USD edits, CellEnv, the task registry,
-                        viz (the viewer on a live cell)
+                        viz (the viewer on a live cell), policy (checkpoint,
+                        oracle or random), train.py and eval.py for any task
 
   ── examples, one folder each ──
   pick_place/           scene, task (simulator-free), lab_env (the task),
                         isaaclab_client + demo_loop (the demo)
   grasp/                scene, task, perception, viz (all simulator-free), lab_env,
-                        lab_rl_cfg, lab_policy, isaaclab_train, isaaclab_eval,
+                        lab_rl_cfg (PPO), lab_policy (the oracle),
                         layouts/ (the layout banks), policies/ (a trained checkpoint)
 configs/                cuRobo robot config (generated)
 assets/robot/           the robot description, one folder per device
@@ -369,7 +478,7 @@ Everything plugs into registries:
 | a gripper mechanism | a handler in `lab/usd_edits.LINKAGES`, named by the rig's `gripper.linkage` |
 | a scene | an example folder `scripts/<name>/` with a `scene.py` defining a `SceneSpec` |
 | a camera kind | a builder in `lab/scene_cfg.CAMERA_BUILDERS` |
-| a task | the example's `lab_env.py` with a `CellEnvCfg` / `CellEnv` subclass, and a line in `lab/tasks/TASKS` |
+| a task | the example's `lab_env.py` with a `CellEnvCfg` / `CellEnv` subclass, and an entry in `lab/tasks/TASKS` -- see [Your own task](#your-own-task) |
 | a planner transport | a `PlannerPool` subclass in `lab/planner_pool.py`, chosen by `CellCfg.planner_mode` |
 
 ## Limitations

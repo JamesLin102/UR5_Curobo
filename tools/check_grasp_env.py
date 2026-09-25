@@ -73,7 +73,7 @@ import numpy as np  # noqa: E402
 from isaaclab_tasks.utils.parse_cfg import parse_env_cfg  # noqa: E402
 
 import lab  # noqa: E402,F401  (registers the ids)
-from grasp import lab_policy  # noqa: E402
+from lab import policy as lab_policy  # noqa: E402
 from grasp import task as T  # noqa: E402
 from lab.tasks import task_id  # noqa: E402
 

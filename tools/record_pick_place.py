@@ -25,7 +25,6 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
-import planner_servers  # noqa: E402
 from lab import app as lab_app  # noqa: E402
 
 ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -48,7 +47,7 @@ def say(msg):
 
 
 os.makedirs(ARGS.out, exist_ok=True)
-SERVER = None if ARGS.no_server else planner_servers.launch(1, "--scene", ARGS.scene)
+SERVER = None
 APP = lab_app.launch(ARGS)
 
 import gymnasium as gym  # noqa: E402
@@ -60,7 +59,10 @@ from recording import Recorder  # noqa: E402
 
 
 def main():
+    global SERVER
     tid, cfg = lab_app.make_env_cfg(ARGS)
+    if not ARGS.no_server:
+        SERVER = lab_app.start_servers(cfg, log=say)
     cfg.viewer.resolution = (W, H)
     cfg.viewer.eye, cfg.viewer.lookat = tuple(ARGS.eye), tuple(ARGS.lookat)
     env = gym.make(tid, cfg=cfg, render_mode="rgb_array")

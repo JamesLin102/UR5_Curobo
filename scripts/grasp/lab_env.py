@@ -40,6 +40,7 @@ from lab.tasks.base import CellEnv, CellEnvCfg
 from legs import leg_ops, tool_pose
 
 from . import perception as P
+from . import viz as grasp_viz
 from . import scene as G
 from . import task as T
 
@@ -107,6 +108,8 @@ class GraspEnv(CellEnv):
 
     def reset_cells(self, env_ids, options):
         env_ids = list(env_ids)
+        for e in env_ids:
+            self.est[e], self.scan_views[e] = None, []     # until this episode's scan
         chosen = options.get("layouts")
         if chosen is not None:
             rows = np.asarray([chosen[e] if np.ndim(chosen) else chosen for e in env_ids])
@@ -234,6 +237,8 @@ class GraspEnv(CellEnv):
         self._term = self.to_torch(term, torch.bool)
         self._trunc = self.to_torch(trunc, torch.bool)
         self.extras["attempt"] = info
+        self.extras["success"] = [bool(i["success"]) for i in info]
+        self.extras["outcome"] = [i["outcome"] for i in info]
         self.extras["stuck"] = self.stuck
         # What rsl_rl's logger averages and plots (extras["log"]).
         done = term | trunc
@@ -302,6 +307,17 @@ class GraspEnv(CellEnv):
             self.stuck += len(stuck)
             self.cell._home(stuck)
             self.cell.idle(stuck, 30)
+
+    # --- what lab.viz draws (--viz, the videos) -------------------------------------------
+
+    def viz_views(self, e):
+        """The last scan's views, rather than whatever the camera sees right now."""
+        return self.scan_views[e] or None
+
+    def viz_draw(self, viewer, e):
+        """The perception layer: the estimate against the truth."""
+        cube = self._cube_xyyaw(self.cell.observe([e]).objects[self.cube_name][0])
+        return grasp_viz.show_estimate(viewer, self.est[e], cube, self.cylinders[e])
 
     # --- what the RL loop reads -----------------------------------------------------------
 

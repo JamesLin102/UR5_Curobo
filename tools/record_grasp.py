@@ -24,14 +24,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
-import planner_servers  # noqa: E402
 from lab import app as lab_app  # noqa: E402
 
 FIRST = os.path.join(ROOT, "scripts", "grasp", "policies", "first.pt")
 
 ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
 lab_app.add_args(ap, task="Grasp")
-ap.set_defaults(scene="grasp")
+ap.set_defaults(mapping=True)      # evaluation mode: the scan, the map, perception
 ap.add_argument("--layouts", type=int, nargs="+", required=True, help="bank rows, in order")
 ap.add_argument("--bank", default="eval")
 ap.add_argument("--policy", default=FIRST, help="a model_N.pt checkpoint, 'oracle' or 'random'")
@@ -56,21 +55,22 @@ def say(msg):
 
 
 os.makedirs(ARGS.out, exist_ok=True)
-SERVER = planner_servers.launch(1, "--scene", "grasp")
+SERVER = None
 APP = lab_app.launch(ARGS)
 
 import gymnasium as gym  # noqa: E402
 
-from grasp import lab_policy  # noqa: E402
+from lab import policy as lab_policy  # noqa: E402
 from grasp import task as T  # noqa: E402
-from grasp import viz as grasp_viz  # noqa: E402
 
 
 def main():
+    global SERVER
     tid, cfg = lab_app.make_env_cfg(ARGS)
     cfg.task.bank = ARGS.bank
     cfg.viewer.resolution = (W, H)
     cfg.viewer.eye, cfg.viewer.lookat = tuple(ARGS.eye), tuple(ARGS.lookat)
+    SERVER = lab_app.start_servers(cfg, log=say)
     env = gym.make(tid, cfg=cfg, render_mode=None if ARGS.dry_run else "rgb_array")
     u = env.unwrapped
     rows = list(ARGS.layouts)
@@ -83,21 +83,15 @@ def main():
         rec = Recorder(env, viz, ARGS.out, ARGS.name, (W, H), ARGS.every, log=say)
 
     # Every episode's reset goes through here: the video stops at the one after
-    # the last layout, and the perception layer follows each new estimate.
+    # the last layout. (The perception layer is the env's own, GraspEnv.viz_draw.)
     reset_cells = u.reset_cells
 
-    def reset_and_show(env_ids, options):
+    def reset_and_count(env_ids, options):
         state["resets"] += 1
-        k = state["resets"] - 1
-        if rec is not None and k >= len(rows):
+        if rec is not None and state["resets"] > len(rows):
             rec.paused = True
-        if viz is not None:
-            viz.viewer.clear("perception")
         reset_cells(env_ids, options)
-        if viz is not None and k < len(rows):
-            cube = u._cube_xyyaw(u.cell.observe([0]).objects[u.cube_name][0])
-            grasp_viz.show_estimate(viz.viewer, u.est[0], cube, u.cylinders[0])
-    u.reset_cells = reset_and_show
+    u.reset_cells = reset_and_count
 
     policy = lab_policy.make(env, ARGS.policy, ARGS.rl_device, log=say)
     state["resets"] = 0            # rsl_rl's wrapper reset the env once already, above
@@ -135,6 +129,7 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
     finally:
-        SERVER.stop()
+        if SERVER is not None:
+            SERVER.stop()
         sys.stdout.flush()
         os._exit(0 if ok else 1)

@@ -14,6 +14,17 @@ A task subclasses CellEnv and supplies:
     _get_dones / _get_rewards / _get_observations, from self.last (the
                            ProgramResults of this step's programs)
 
+and, each step, in self.extras, what lab/eval.py counts:
+
+    "success"   [bool] per environment: did this step achieve the task
+    "outcome"   [str] per environment: what the step came to, in a word or two
+
+Optionally, for lab.viz (--viz, the videos):
+
+    viz_views(e)           -> the camera views to show for env e, or None: the
+                           cameras' current ones
+    viz_draw(viewer, e)    draws the "perception" layer; returns status lines
+
 Used on its own, CellEnv is a cell with no task: actions are ignored and each
 step just holds for one tick. That is what the checks under tools/ use.
 

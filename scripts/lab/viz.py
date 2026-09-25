@@ -6,9 +6,11 @@
 update() reads what the cell has now: every camera's current view (or the
 views it is given -- a scan's, say), the map from that environment's planner
 server (the "voxels" op; nothing with --no-mapping), and the scene with its
-simulator-only bodies and payload where they stand. An example adds its own
-perception layer on the same viewer (grasp.viz). Call it between steps, from
-the thread that steps: it talks to the planner server like the cell does.
+simulator-only bodies and payload where they stand. A task can say more
+through two optional methods on its env (lab/tasks/base.py): viz_views(e),
+the views to show instead of the cameras' current ones (grasp: its last
+scan), and viz_draw(viewer, e), the perception layer. Call it between steps,
+from the thread that steps: it talks to the planner server like the cell does.
 
 Importing this needs nothing from Isaac, so entry points can add_args() before
 the app starts -- and must call preload() before it starts too: Kit puts its
@@ -47,6 +49,9 @@ class CellViz:
     def update(self, views=None, labels=None, notes=()):
         """Redraw the cameras, map and reference layers. Returns the status lines."""
         cell, e = self.u.cell, self.e
+        if views is None and hasattr(self.u, "viz_views"):
+            views = self.u.viz_views(e)
+            labels = None
         if views is None:
             labels = sorted(cell.cams)
             views = [cell.camera_view(name, [e])[0] for name in labels]
@@ -61,6 +66,8 @@ class CellViz:
         lines = [f"**env {e}**, sim time {float(obs.sim_time):.1f} s",
                  f"cameras: {len(views)} view(s), {n_pts} points" if views else "cameras: none",
                  f"map: {n_vox} voxels" if vox is not None else "map: none (no mapping)"]
+        if hasattr(self.u, "viz_draw"):
+            lines += list(self.u.viz_draw(self.viewer, e) or [])
         lines += list(notes)
         self.viewer.set_status("  \n".join(lines))
         return lines

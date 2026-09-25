@@ -34,6 +34,7 @@ sys.stdout.reconfigure(line_buffering=True)
 
 _ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
 lab_app.add_args(_ap)
+_ap.set_defaults(scene=scenes.DEFAULT)
 _ap.add_argument("--static", action="store_true",
                  help="hold the arm at HOME; no planning, just look")
 ARGS = _ap.parse_args()

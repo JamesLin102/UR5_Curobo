@@ -25,12 +25,14 @@ def _cube_pose(x, y, yaw):
 
 
 def show_estimate(viewer, est, cube_truth=None, cylinders_truth=None):
-    """est a task.Estimate (or None: nothing seen); cube_truth (x, y, yaw); cylinders_truth [(x, y)]."""
+    """est a task.Estimate (None: none yet); cube_truth (x, y, yaw); cylinders_truth [(x, y)]."""
     viewer.clear("perception")
     dims, pose = G.NO_GO
     viewer.box("perception", "no_go", dims, pose, PURPLE)
     lines = []
-    if est is None or est.visibility <= 0.0:
+    if est is None:
+        lines.append("perception: not yet (scanning)")
+    elif est.visibility <= 0.0:
         lines.append("**perception: no cube seen**")
     else:
         x, y, yaw = (float(v) for v in est.cube)
