@@ -1,10 +1,10 @@
-# Everything but cuRobo, which is installed from a pinned source checkout
-# afterwards -- see "Install" in the README. Versions are the ones the README's
-# numbers were measured with.
+# Everything but cuRobo and Isaac Lab, which are installed from pinned source
+# checkouts afterwards -- see "Install" in the README. Versions are the ones the
+# README's numbers were measured with.
 #
 #   conda env create -f environment.yml
-#   conda activate ur5_curobo
-name: ur5_curobo
+#   conda activate curobo_isaaclab
+name: curobo_isaaclab
 channels:
   - conda-forge
 dependencies:
@@ -13,7 +13,7 @@ dependencies:
   - pip:
       - --extra-index-url https://download.pytorch.org/whl/cu128
       - --extra-index-url https://pypi.nvidia.com
-      # torch before Isaac Sim, and a cu128 build: the RTX 50 series
+      # torch before Isaac Sim (Isaac Lab runs on it), and a cu128 build: the RTX 50 series
       # (Blackwell, sm_120) needs CUDA 12.8 or newer.
       - torch==2.7.0+cu128
       - torchvision==0.22.0+cu128

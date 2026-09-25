@@ -1,36 +1,35 @@
 # UR5_curobo
 
-**Camera-guided pick and place for a UR5 in Isaac Sim, planned by cuRobo.**
-The planner is never told where the obstacle is — the cameras find it.
+**A UR5 on Isaac Lab, planned by cuRobo: camera-guided pick and place, and a
+grasping task to train with RL.** The planner is never told where the obstacles
+are — the cameras find them.
 
 <p align="center">
   <img src="docs/media/pick_place.gif" width="720" alt="pick_place: two round trips past the slab">
   <br>
-  <sub>Two round trips, 2× speed. <a href="docs/media/pick_place.mp4">Full quality, real time (MP4)</a></sub>
+  <sub>pick_place, two round trips, 2× speed (recorded on the former Isaac Sim
+  backend). <a href="docs/media/pick_place.mp4">Full quality, real time (MP4)</a></sub>
 </p>
 
 A UR5 (CB3) with a Robotiq FT 300, Wrist Camera, 2F-85 gripper and a RealSense
-D435i shuttles a block between two pedestals. Between them stands a slab that
-exists **only in the simulator**: the planner's world is the table and the
-pedestals, nothing else. A wrist camera and a fixed overhead camera fuse depth
-into a live TSDF/ESDF with cuRobo 0.8's mapper, and the planner routes around
-whatever the map holds.
+D435i, in two examples:
 
-Closest approach to the slab on the legs that cross it, measured by the planner
-server on every plan:
+- **`pick_place`** shuttles a block between two pedestals. Between them stands a
+  slab that exists **only in the simulator**: a wrist camera and a fixed
+  overhead camera fuse depth into a live map with cuRobo 0.8's mapper, and the
+  planner routes around whatever the map holds.
+- **`grasp`** lifts a 45 mm cube from among 0–4 tall cylinders, with the wrist
+  camera alone. A PPO policy picks where and at what angle to grip; cuRobo
+  makes every motion. Everything the policy sees is something the real arm has.
 
-| | plans | closest approach to the slab |
-|---|---|---|
-| mapping off | 0 failures | **−16 to −26 mm** — straight through it |
-| mapping on | 0 failures | **−4 to +11 mm** — around it, once the map exists |
+Both are registered Isaac Lab tasks (`DirectRLEnv`), one gym id per task per
+robot, and run one cell or many side by side.
 
-The block lands on its target pedestal to within 1–3 mm either way.
-
-The same cell is also a library (`SimEnv`: reset, move, grip, observe) and a
-gymnasium environment (`PickPlaceEnv`) for learning where to grip, with cuRobo
-doing every motion in between. It also runs on **Isaac Lab**, as a registered
-`DirectRLEnv` task, with the same planner and the same results — see
-[Isaac Lab backend](#isaac-lab-backend-experimental).
+| | result |
+|---|---|
+| pick_place, mapping off | closest approach to the slab **−16 to −26 mm** — straight through it |
+| pick_place, mapping on | **−4 to +11 mm** — around it, once the map exists; block within 1–3 mm of its goal |
+| grasp, first policy (500 PPO iterations, 5.4 h) | **91%** with the planner told the cylinders, **86%** with only the wrist camera's scan (oracle: 98% / 79%) |
 
 ---
 
@@ -38,14 +37,14 @@ doing every motion in between. It also runs on **Isaac Lab**, as a registered
 
 - Ubuntu 22.04, conda
 - An NVIDIA GPU and driver **≥ 580.65.06** (cuRobo 0.8's minimum). Developed on
-  an RTX 5080 (16 GB). No system CUDA toolkit is needed: cuRobo JIT-compiles
-  its kernels at runtime.
+  an RTX 5080 (16 GB) with 31 GB of RAM. No system CUDA toolkit is needed:
+  cuRobo JIT-compiles its kernels at runtime.
 - A desktop session for the viewer, or `--headless`
 
-It runs as **two processes, by design**: Isaac Sim 5.1 needs Warp 1.8.2,
-cuRobo 0.8 needs Warp ≥ 1.13, and no version satisfies both. cuRobo lives in
-`planner_server.py`, Isaac Sim in the demo client, and they talk over a
-local socket.
+It runs as **two processes, by design**: Isaac Lab 2.3 runs on Isaac Sim 5.1 and
+its Warp 1.8.2, cuRobo 0.8 needs Warp ≥ 1.13, and no version satisfies both.
+cuRobo lives in `planner_server.py`, Isaac Lab in the client, and they talk over
+a local socket. Nothing under `scripts/lab/` imports cuRobo.
 
 ## Install
 
@@ -53,7 +52,7 @@ local socket.
 
 ```bash
 conda env create -f environment.yml
-conda activate ur5_curobo
+conda activate curobo_isaaclab
 ```
 
 **2. cuRobo, from source, pinned.** Everything here was measured on commit
@@ -77,104 +76,197 @@ cd -
 - Keep the pin on a branch, not a tag: cuRobo reads its version from
   `git describe`, and a non-version tag makes `import curobo` fail.
 
-**3. First launch.** Isaac Sim asks you to accept its EULA the first time it
+**3. Isaac Lab, from source, into the same environment.** Tested at commit
+`b4c3210247` (`VERSION` 2.3.2, extension `isaaclab` 0.54.4):
+
+```bash
+git clone https://github.com/isaac-sim/IsaacLab ~/IsaacLab
+cd ~/IsaacLab
+git checkout b4c321024792976150ca55fddb26fa34480d974e
+./isaaclab.sh --install rsl_rl
+python -m pip install --no-deps "packaging==23.0"
+cd -
+```
+
+`--install rsl_rl` adds the RL library training uses; the last line restores
+`packaging` again. Then check that `python scripts/planner_server.py` still
+starts.
+
+**4. First launch.** Isaac Sim asks you to accept its EULA the first time it
 starts (or set `OMNI_KIT_ACCEPT_EULA=YES` once you have read it). The first
 launch on a machine builds shader and extension caches and can take well over
 ten minutes; later ones take seconds.
 
-**4. Check it works:**
+**5. Check it works.** Each starts its own planner servers and ends with `PASS`
+or `ALL PASSED`:
 
 ```bash
-python tools/check_robot_cfg.py      # cuRobo only: FK, planner build, one plan (~1 min)
-python tools/check_pick_place.py     # the whole loop, headless, both modes
+python tools/check_robot_cfg.py            # cuRobo only: FK, planner build, one plan (~1 min)
+python tools/check_lab_modularity.py       # import rules, task registry, every scene builds
+python tools/check_pick_place_lab.py       # pick_place, mapping off and on (~2 min)
+python tools/check_grasp_lab.py            # the gripper lifts the cube, 20 times
+python tools/check_grasp_env.py            # the grasp gym env with an oracle, and the rsl_rl wrapper
 ```
 
-`check_pick_place.py` starts its own planner server, runs two oracle episodes
-with mapping off and on, and checks that every pick holds the block, every
-place delivers it, the mapped routes clear the slab and the unmapped ones do
-not. It ends with `ALL PASSED` (76 s on the development machine, after the
-first launch).
-
-## Run the demo
+## pick_place: the demo
 
 Two terminals, from the repository root. The server must be listening before
-the sim starts.
+the client starts.
 
 ```bash
 python scripts/planner_server.py
 ```
 
 ```bash
-python scripts/pick_place/isaacsim_client.py
+python scripts/pick_place/isaaclab_client.py --device cpu
 ```
 
 The arm scans the cell, then carries the block back and forth. Drag the slab
-(`/World/drag_me`) in the viewport and the next plans go around its new
-position. Closing the window does **not** stop the server; stop it with
+(`/World/envs/env_0/drag_me`) in the viewport and the next plans go around its
+new position. Closing the window does **not** stop the server; stop it with
 Ctrl-C (`ss -ltnp | grep 5599` shows a stale one).
+
+Several cells at once — one planner server per cell, since each holds the map
+of what its own cameras saw:
+
+```bash
+python scripts/planner_servers.py --num 4
+```
+
+```bash
+python scripts/pick_place/isaaclab_client.py --device cpu --num_envs 4 --camera-class tiled
+```
 
 | flag | side | |
 |---|---|---|
-| `--no-mapping` | both | plan against the static world only — the A/B control |
+| `--no-mapping` | both | plan against the static world only — the control |
 | `--no-overhead` | client | wrist camera alone |
 | `--headless` | client | no window; renders only if the cameras need it |
 | `--static` | client | hold at HOME and just look through the cameras |
 | `--scene NAME` | both | another example's scene (`scripts/NAME/scene.py`); must match |
+| `--camera-class tiled` | client | one render product for every camera: about twice as fast with many cells |
 | `--allow-curobo-drift` | server | start on a cuRobo other than the pinned commit |
+
+**Use `--device cpu`.** With this robot's solver iterations GPU PhysX costs a
+fixed ~20 ms a step however many cells; CPU PhysX is 0.8 ms for one and still
+about 3× faster at 32.
+
+## grasp: training and evaluation
+
+One env step is **one grip attempt** in every environment: the policy gives
+`[dx, dy, dz, yaw]` relative to the *perceived* cube centre; cuRobo plans above
+it, descends straight, grips, lifts 75 mm. Success is a lift with the gripper
+still holding. One attempt per episode, on layouts where exactly one of the two
+face-square grips can be planned — choosing the right one is what there is to
+learn (uniform random actions: 45%, an oracle that knows the answer: 98%).
+
+- **The actor sees only what the real arm has** (29 numbers): the perceived
+  cube pose, how much of it was seen, the perceived cylinders, the last attempt.
+  The critic also gets the truth (45). Neither sees images:
+  `scripts/grasp/perception.py` (numpy and scipy only, so it runs on the real
+  arm unchanged) turns the scan's depth and RGB into the same numbers.
+- **Training mode** renders nothing. The planner is told each environment's
+  cylinders, and the perceived poses are the truth plus an error model
+  (`TaskCfg` in `scripts/grasp/task.py`) deliberately wider than perception's
+  measured error.
+- **Evaluation mode** is the real arm's: every episode starts with a wrist
+  camera scan, the map is built from it, the policy sees `perception.py`'s
+  estimate, and straight moves are checked against the map.
+- Layouts come from banks checked offline to have a grip that works
+  (`scripts/grasp/layouts/`, built by `tools/grasp_layout_bank.py`).
+
+Train (starts its own planner servers; 64 environments on one batch-planning
+server is the fastest setting measured, ~13.5 attempts/s):
+
+```bash
+python scripts/grasp/isaaclab_train.py --smoke --batch      # 2 envs, 3 iterations: does it run
+python scripts/grasp/isaaclab_train.py --num_envs 64 --num-servers 1 --batch --run-name first
+tensorboard --logdir logs/rsl_rl/grasp
+```
+
+Checkpoints (every 25 iterations; the last is `model_499.pt`) and tensorboard
+go to `logs/rsl_rl/grasp/<time>_<run-name>/`; `--resume` continues one. PPO is
+in `scripts/grasp/lab_rl_cfg.py`, untuned. Besides the reward, tensorboard has
+`episode/success`, `attempt/<outcome>` and `stuck_total` (returns home that had
+to be teleports; should stay 0).
+
+Evaluate a checkpoint, the oracle or random actions on the evaluation bank:
+
+```bash
+python scripts/grasp/isaaclab_eval.py --policy logs/rsl_rl/grasp/<run>/model_499.pt --mode eval
+python scripts/grasp/isaaclab_eval.py --policy <same> --mode train --num_envs 8
+python scripts/grasp/isaaclab_eval.py --policy <same> --mode train --num_envs 1 --episodes 20 --gui
+```
+
+`--gui` opens the window to watch. While a training run holds the default
+port, add `--port 5699` so the evaluation's servers can bind.
+
+**The first run** (2026-09-24/25, 64 envs, 500 iterations, 5.4 h): training
+success rose 54% → 89%, most of it in the first 200 iterations; what is left is
+mostly choosing the wrong pair of faces. `model_499.pt` on the evaluation bank,
+64 episodes each:
+
+| | training mode | evaluation mode |
+|---|---|---|
+| policy | **58/64 (91%)** | **55/64 (86%)** |
+| failures | 5 no plan, 1 empty grip | 8 straight moves refused by the map, 1 no plan |
+| cylinder contacts | 0 | 3 |
+| oracle, for comparison | 98% | 79% |
+
+In evaluation mode the policy beats the oracle, apparently by gripping further
+from cylinders the map makes fatter than they are.
+
+**Before the real arm:**
+
+1. **Success is too lenient.** A diagonal grip holds the 45 mm cube in
+   simulation but would likely slip in a real 2F-85; the policy may have learnt
+   such grips. Require the grip to be near face-square, or a shake after the
+   lift, and retrain.
+2. **Contacts in evaluation mode** come from an incomplete map: tops of
+   cylinders at the workspace's edge are in no scan view, and `MoveTo` does not
+   confirm the arm arrived.
+3. **Perception on hardware:** a yellow 45 mm cube (the colour thresholds in
+   `PerceptionCfg` are the simulator's and need re-tuning under real light),
+   hand-eye calibration, and a measurement of the real error to check it lies
+   inside the training error model.
+4. **A hardware cell:** something that offers `cell_api`'s primitives on the
+   real UR5, 2F-85 and D435i.
+
+`BatchMotionPlanner`, which `--batch` uses, is a private cuRobo module and does
+not retry; a cuRobo upgrade may need changes there.
 
 ## Use it from code
 
-```python
-from sim import sim_env                     # scripts/ on sys.path
-sim_env.launch(headless=True)               # before anything else from Isaac Sim
-env = sim_env.SimEnv(sim_env.EnvCfg(mapping=False))
-env.reset(sim_env.ResetOptions(block_on=0))
-env.move_to(target)                         # planned by cuRobo
-env.move_tool_z(-0.125)                     # straight down, by IK
-env.grip(close=True)
-obs = env.observe()                         # joints, tool pose, block pose, holding
-```
-
-As a gymnasium environment, one step is one pick or place, and the action is
-where the gripper acts:
+As any Isaac Lab task: start the app first, then make the environment from its
+registered id.
 
 ```python
-from pick_place.isaacsim_env import PickPlaceEnv
-env = PickPlaceEnv(headless=True)
-obs, info = env.reset(seed=0)
-obs, reward, terminated, truncated, info = env.step([x, y, z, yaw])
+import sys; sys.path.insert(0, "scripts")
+from isaaclab.app import AppLauncher
+app = AppLauncher(headless=True, device="cpu").app       # before anything else from Isaac
+
+import gymnasium as gym, torch
+import lab                                               # registers the ids
+from isaaclab_tasks.utils.parse_cfg import parse_env_cfg
+
+cfg = parse_env_cfg("Isaac-PickPlace-Ur5Robotiq-v0", device="cpu", num_envs=1)
+cfg.cell.mapping = False                                 # the server needs --no-mapping to match
+env = gym.make("Isaac-PickPlace-Ur5Robotiq-v0", cfg=cfg)
+obs, extras = env.reset(seed=0, options={"block_on": 0})
+obs, reward, terminated, truncated, extras = env.step(torch.tensor([[x, y, z, yaw]]))
+extras["leg"][0]                                         # what the leg did: plan, clearance, grip, ...
 ```
 
-An oracle delivers in 2 steps; an episode takes about 2 s headless with mapping
-off and about 20 s with it on (each reset rescans). The planner server must be
-running, with `--no-mapping` to match `EnvCfg(mapping=False)`.
+The primitives underneath:
 
-## Isaac Lab backend (experimental)
-
-The cell rebuilt on Isaac Lab 2.3 (`scripts/lab/`), next to the Isaac Sim one
-and sharing its robot, scenes, planner server and demo loop. It registers
-`Isaac-PickPlace-Ur5Robotiq-v0` — one id per task per robot in `rig.ROBOTS` —
-so `gymnasium.make()`, Isaac Lab's `parse_env_cfg()` and its RL wrappers all
-take it. It runs one cell or many side by side, each with its own cameras, map
-and planner server.
-
-```bash
-python scripts/planner_server.py                      # as before
-python scripts/pick_place/isaaclab_client.py --device cpu    # the demo, on Isaac Lab
-python tools/check_pick_place_lab.py --device cpu --both-backends   # A/B, headless
+```python
+cell = env.unwrapped.cell.view(0)       # one environment as a cell_api.CellLike
+cell.move_to(target); cell.move_tool_z(-0.125); cell.grip(close=True)
+obs = cell.observe()
 ```
 
-Four cells at once (one planner server each):
-
-```bash
-python scripts/planner_servers.py --num 4
-python scripts/pick_place/isaaclab_client.py --device cpu --num_envs 4 --camera-class tiled
-```
-
-It needs Isaac Lab installed from source into the same environment. Install
-steps, the A/B numbers, what differs between the backends and why, how to add
-robots, scenes and tasks, and how far it scales are in
-[docs/isaaclab.md](docs/isaaclab.md).
+`cfg.cell` (`scripts/lab/cell_cfg.py`) holds every runtime setting: robot,
+scene, mapping, cameras, markers, depth lag, planner mode.
 
 ## Layout
 
@@ -182,56 +274,66 @@ robots, scenes and tasks, and how far it scales are in
 scripts/
   ── shared, whatever the example ──
   planner_server.py     cuRobo: planning + live mapping, on a local socket
-  planner_servers.py    N of them on consecutive ports, one per Isaac Lab cell
-  planner_client.py     its client; needs neither Isaac Sim nor cuRobo
-  cell_api.py           what every backend offers: config, results, primitives
+  planner_servers.py    N of them on consecutive ports
+  planner_client.py     its client; needs neither Isaac nor cuRobo
+  cell_api.py           the cell contract: config, results, primitives, ops
   legs.py               one grip as ops: above, down, grip, up
-  sim_usd.py, urdf_frames.py   USD and URDF helpers both backends use
+  urdf_frames.py        frame arithmetic read off the URDF
   rig.py                robots (arm + gripper settings), timing, port, cuRobo pin
   scenes/               the scene contract (base.py) and registry
 
-  ── backends ──
-  lab/                  Isaac Lab: robots, scene, cell, CellEnv, the task registry
-  sim/                  Isaac Sim, as a library: SimEnv (frozen, the A/B reference)
+  ── the backend ──
+  lab/                  Isaac Lab: robots, scene, cell (N envs), programs,
+                        planner pool, USD edits, CellEnv, the task registry
 
   ── examples, one folder each ──
-  pick_place/
-    scene.py            the scene
-    task.py             the task itself: rewards, observations; no simulator
-    lab_env.py          Isaac-PickPlace-*-v0, on Isaac Lab
-    isaaclab_client.py  the demo, on Isaac Lab
-    isaacsim_env.py     PickPlaceEnv (gymnasium), on Isaac Sim
-    isaacsim_client.py  the demo, on Isaac Sim
-    demo_loop.py        the demo loop, for either backend
+  pick_place/           scene, task (simulator-free), lab_env (the task),
+                        isaaclab_client + demo_loop (the demo)
+  grasp/                scene, task, perception (all simulator-free), lab_env,
+                        lab_rl_cfg, isaaclab_train, isaaclab_eval, layouts/
 configs/                cuRobo robot config (generated)
 assets/robot/           the robot description, one folder per device
-tools/                  checks, a collision-sphere viewer, model builders
+tools/                  checks, and the builders for the robot model, the grasp
+                        layout banks and the grasp scan poses
 ```
 
-A new scene is a new example folder with a `scene.py` (copy
-`scripts/pick_place/scene.py`); a new robot is an entry in `rig.ROBOTS` plus its
-URDF and cuRobo config. Both backends pick either up without changes;
-docs/isaaclab.md lists the rest of the extension points.
-`tools/check_lab_modularity.py` checks who may import whom.
+Dependencies point one way: an example → the backend → the shared modules.
+Inside an example, files named `lab_*` / `isaaclab_*` are the Isaac Lab side
+and everything else must be simulator-free, because the planner server or the
+real arm may import it. `tools/check_lab_modularity.py` checks all of it.
+
+Everything plugs into registries:
+
+| to add | do this |
+|---|---|
+| a robot | an entry in `rig.ROBOTS` (URDF, cuRobo config, joints, gains, drive type, gripper); a gym id per task appears, `Isaac-{Task}-{Robot}-v0` |
+| a gripper mechanism | a handler in `lab/usd_edits.LINKAGES`, named by the rig's `gripper.linkage` |
+| a scene | an example folder `scripts/<name>/` with a `scene.py` defining a `SceneSpec` |
+| a camera kind | a builder in `lab/scene_cfg.CAMERA_BUILDERS` |
+| a task | the example's `lab_env.py` with a `CellEnvCfg` / `CellEnv` subclass, and a line in `lab/tasks/TASKS` |
+| a planner transport | a `PlannerPool` subclass in `lab/planner_pool.py`, chosen by `CellCfg.planner_mode` |
 
 ## Limitations
 
 - **The margin is thin.** Mapped routes skim the slab (−4 to +11 mm) rather
   than clear it comfortably. Fine for a simulation demo, not a safety margin
   for hardware.
-- **Simulation only.** The overhead camera exists only in the simulator, and
-  `PickPlaceEnv` observes the block's true pose. A real cell needs a second
-  calibrated camera (or a lower obstacle) and object perception.
-- The gripper log sometimes says `TIMED OUT, still moving` on a grasp that is
-  holding fine: its idea of "stopped" is stricter than it needs to be.
+- **Simulation only, so far.** pick_place's overhead camera exists only in the
+  simulator and its task observes the block's true pose; grasp was built for
+  the real arm, but see *Before the real arm* above.
+- A planner server takes about 2 GB of RAM and 0.55 GB of GPU memory; with
+  mapping on each cell needs its own, which limits this machine to about 8.
 
 ## More
 
-- Why each setting is what it is — drive gains, mapper settings, the scene's
-  layout, the upstream cuRobo bugs worked around — is written next to the
-  setting, with the measurement behind it: `scripts/rig.py`,
-  `scripts/pick_place/scene.py`, `scripts/planner_server.py`,
-  `scripts/sim/sim_env.py`.
+- Why each setting is what it is — drive gains and types, mapper settings, the
+  scenes' layouts, the upstream cuRobo bugs worked around, what Isaac Lab's
+  importer does differently — is written next to the setting, with the
+  measurement behind it: `scripts/rig.py`, `scripts/lab/robots.py`,
+  `scripts/lab/cell_cfg.py`, `scripts/*/scene.py`, `scripts/grasp/task.py`,
+  `scripts/planner_server.py`.
+- The design documents and the Isaac Sim backend this grew from are in the git
+  history (last at `37427b8` and `17eff58`).
 - [assets/robot/ur5_robotiq/PROVENANCE.md](assets/robot/ur5_robotiq/PROVENANCE.md)
   — where the robot description comes from. It is vendored from
   [eugene900805/mir_ur5_humble](https://github.com/eugene900805/mir_ur5_humble)

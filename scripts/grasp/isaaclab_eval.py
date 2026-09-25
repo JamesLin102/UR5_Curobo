@@ -10,7 +10,7 @@
 --mode eval: as the real arm would -- the planner told nothing: the wrist
     camera scans at every reset, the map is built from it, the policy is
     shown grasp.perception's estimate from the scan's images, and the
-    straight moves are checked against the map (docs/grasp_rl_plan.md §7).
+    straight moves are checked against the map.
     One mapping planner server per environment; rendering on; slower.
 
 The difference between the two for the same policy is what the training

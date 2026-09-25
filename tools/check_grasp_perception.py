@@ -8,7 +8,7 @@ No simulator. For each captured layout: the cube's position and yaw error
 cylinders the centre error of each one found, the ones missed and the ones
 reported that are not there. The summary is what the training error model
 (grasp.task.TaskCfg: pos_sigma, yaw_sigma_deg, cyl_sigma, miss_p, false_p)
-should be set from (docs/grasp_rl_plan.md §4).
+should be set from.
 
 --depth-noise adds Gaussian noise proportional to depth squared, as a
 stereo camera's is (sigma = given value at 1 m), so the simulator's perfect

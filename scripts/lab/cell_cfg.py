@@ -20,10 +20,10 @@ class CellCfg:
     overhead: bool = True               # also build the scene's FIXED ("pose") cameras
     map_every: int = 6                  # fuse a frame every N sim steps while moving
     # Sim steps the depth image trails the physics by. Isaac Lab renders
-    # synchronously, so it is not the removed Isaac Sim backend's 2: measured 0 with
-    # tools/lab_measure_depth_lag.py, for both cameras, for a teleported
-    # payload and for a 0.3 rad arm jump alike -- the frame read after the
-    # step that moved something already shows it.
+    # synchronously, so it is not the removed Isaac Sim backend's 2: measured 0
+    # (with a since-removed tool, last in 37427b8), for both cameras, for a
+    # teleported payload and for a 0.3 rad arm jump alike -- the frame read
+    # after the step that moved something already shows it.
     depth_lag: int = 0
     verbose: bool = True
 

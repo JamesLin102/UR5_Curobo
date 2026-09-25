@@ -1,7 +1,6 @@
 """The grasp task on Isaac Lab: Isaac-Grasp-{Robot}-v0.
 
-One env step is one grasp ATTEMPT in every environment, in lockstep
-(docs/grasp_rl_plan.md §6):
+One env step is one grasp ATTEMPT in every environment, in lockstep:
 
     action  (num_envs, 4) in [-1, 1]: dx, dy, dz, tool yaw -- relative to where
             perception puts the cube, world-aligned (grasp.task.action_to_grip)

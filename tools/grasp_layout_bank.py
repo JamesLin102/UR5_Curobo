@@ -14,7 +14,7 @@ per layout, is what the task's curriculum and error model need
 cylinder, and how much of the cube each scan view sees.
 
 Checking at reset instead would cost ~0.8 s per grip per environment, every
-episode; this pays it once (docs/grasp_rl_plan.md §2). Writes
+episode; this pays it once. Writes
 scripts/grasp/layouts/<name>.npz. Different seeds for train and eval keep the
 two banks apart.
 """

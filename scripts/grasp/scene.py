@@ -1,12 +1,12 @@
 """Pick a cube off the table from among tall cylinders, seen by the wrist camera only.
 
-The RL scene (docs/grasp_rl_plan.md). Three kinds of object, as in pick_place:
+The RL scene. Three kinds of object, as in pick_place:
 
   obstacles  the table. The planner is TOLD about it.
   unmapped   cylinders, radius 35 mm and 0.30 m tall -- taller than the wrist
              is at the pre-grasp -- that the planner is never told about in
              evaluation: the wrist camera has to find them. (In training the
-             planner will be told; that is a mode, not a different scene.)
+             planner is told; that is a mode, not a different scene.)
   payload    a 45 mm cube, the same block pick_place uses, straight on the
              table, in a colour the table does not have.
 
@@ -17,8 +17,8 @@ and from behind, which see the cylinders' sides and whatever one cylinder
 hides from the view above.
 
 This file holds one fixed layout, to look at and to test against. Episodes
-will randomise the cube within CUBE_XY and the cylinders within CYL_XY
-(a later milestone).
+draw the cube within CUBE_XY and the cylinders within CYL_XY from the layout
+banks (grasp/layouts/, tools/grasp_layout_bank.py).
 
 HOME and SCAN_POSES are solved, not guessed, by tools/grasp_scan_poses.py:
 collision-aware IK for each camera VIEW against the table plus NO_GO -- the
@@ -26,8 +26,7 @@ volume any cylinder could occupy -- and then the joint-space blends between
 consecutive poses (the path the scan actually takes) checked against NO_GO
 too. Its report is pasted below them.
 
-    python scripts/planner_server.py --scene grasp
-    python tools/grasp_view.py
+    python tools/grasp_capture.py --out /tmp/grasp_capture --layouts 20   # what the scan sees
 """
 
 import math
@@ -48,7 +47,7 @@ TABLE_RGB = (0.45, 0.47, 0.50)
 TABLE = ("table", [2.00, 2.00, 0.10], [0.00, 0.0, TABLE_TOP - 0.05, 1, 0, 0, 0], TABLE_RGB)
 
 CUBE_SIZE = 0.045
-CUBE_RGB = (0.95, 0.80, 0.05)      # bright yellow: an RGB threshold finds it (plan §4)
+CUBE_RGB = (0.95, 0.80, 0.05)      # bright yellow: an RGB threshold finds it (perception.py)
 CUBE_MASS = 0.15
 
 CYL_RADIUS = 0.035
@@ -116,7 +115,7 @@ CAMERAS = {
         "near": 0.28,
         "far": 3.0,
         "link": "camera_link",
-        "rgb": True,        # the cube's edges come from colour (plan §4)
+        "rgb": True,        # the cube's edges come from colour (perception.py)
     },
 }
 
@@ -197,7 +196,8 @@ MAPPER = {
 
 # pick_place's rule, with the table top where the pedestal top was. The
 # 12 mm clearance was measured on a pedestal; on the table it still has to be
-# (docs/grasp_rl_plan.md §2).
+# (tools/check_grasp_lab.py: 20/20 lifted on the empty table, the cube pushed
+# 0.5-2.4 mm while gripped).
 PAD_HALF = ROBOTS[DEFAULT_ROBOT]["gripper"]["pad_half"]
 PAD_CLOSE_DROP = ROBOTS[DEFAULT_ROBOT]["gripper"]["pad_close_drop"]
 PAD_CLEARANCE = 0.012

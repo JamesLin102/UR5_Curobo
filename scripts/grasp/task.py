@@ -1,7 +1,6 @@
 """The grasp task, simulator-free: layouts, what the policy sees, what it is paid.
 
-docs/grasp_rl_plan.md is the design; this is it in numpy, shared by the Isaac
-Lab environment (lab_env.py) and anything that wants to score or sample
+The design in numpy, shared by the Isaac Lab environment (lab_env.py) and anything that wants to score or sample
 without a simulator (the layout bank, checks). Nothing here imports Isaac or
 cuRobo: the perception half has to run on the real arm as well.
 
@@ -16,7 +15,7 @@ max_attempts grips. One step is one attempt:
 Frames. Every position the policy sees or gives is in a frame aligned with the
 WORLD and centred on the ESTIMATED cube, never one turned with the cube: the
 cube's yaw is only defined modulo 90 deg, and a frame turned by it would jump
-by 90 deg at +-45 while cos 4th, sin 4th did not (plan §5).
+by 90 deg at +-45 while cos 4th, sin 4th did not.
 """
 
 import math
@@ -45,7 +44,7 @@ class TaskCfg:
     hold_below: float = 0.60
     contact_force: float = 1.0      # N: a solid body felt more than this = touched
     pushed_xy: float = 0.03         # the cube moved this far and was not lifted
-    # Reward (plan §6)
+    # Reward
     r_success: float = 1.0
     r_attempt: float = -0.05
     r_failed_motion: float = -0.1   # no plan, no IK, a straight move refused
@@ -55,7 +54,7 @@ class TaskCfg:
     dxy: float = 0.02
     dz_lo: float = -0.010
     dz_hi: float = 0.015
-    # Perception model (plan §4): what the estimate the policy sees is off by
+    # Perception model: what the estimate the policy sees is off by
     pos_sigma: float = 0.002        # m, at full visibility
     yaw_sigma_deg: float = 2.0
     cyl_sigma: float = 0.003
@@ -70,7 +69,7 @@ class TaskCfg:
     max_cylinders: int = G.MAX_CYLINDERS
     min_gap: float = 0.015
     # The share of episodes drawn from layouts where only ONE of the two
-    # face-square grips works: where choosing is the task (plan §2.2). The rest
+    # face-square grips works: where choosing is the task. The rest
     # are drawn from every eligible layout.
     one_grip_fraction: float = 1.0
     # A grip counts as working only with this much between the arm's collision
@@ -238,7 +237,8 @@ def synth_estimate(rng, cube, cylinders, cfg: TaskCfg) -> Estimate:
     cube (x, y, yaw) and cylinders [(x, y)] are the truth, where they stand now.
     The visibility is the best scan view's; the less of the cube is seen, the
     worse the fit. Training uses this; evaluation and the real arm use
-    perception.py, whose errors this is to be calibrated against (plan §4).
+    perception.py, whose errors this is to be calibrated against: on the
+    simulator by tools/check_grasp_perception.py, on the real arm by measuring.
     """
     vis = float(cube_visibility(cube, cylinders, SCAN_EYES).max())
     scale = 1.0 + 2.0 * (1.0 - vis)

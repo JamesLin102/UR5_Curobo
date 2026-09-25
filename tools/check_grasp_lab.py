@@ -14,7 +14,7 @@ plan to above it, straight down, close, lift.
 Per grip it reports whether it lifted (the cube rose by at least half of
 lift_m and is still up after holding 30 steps), how far the fingers pushed it
 before it rose, and where the gripper's leader joint stopped. That last number
-is what "holding" will be read from on the real arm (docs/grasp_rl_plan.md §5):
+is what "holding" will be read from on the real arm:
 closed on a 45 mm cube it stalls short of the commanded angle, closed on
 nothing it goes all the way.
 

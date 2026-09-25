@@ -286,8 +286,8 @@ def draw_targets(targets):
     the markers into the map as obstacles sitting exactly on the goals, and
     then every plan fails (measured: 193 of 199). An overlay is drawn by a
     separate pass that DEPTH does not sample. Colour does: on Isaac Lab a
-    camera's "rgb" output shows these lines and points (seen in
-    tools/grasp_view.py), so anything that reads colour needs them off.
+    camera's "rgb" output shows these lines and points, so anything that
+    reads colour needs them off.
 
     Points plus a small axis cross, so a goal reads as a location rather than a
     stray dot. Redrawn from scratch each time, because the overlay accumulates.

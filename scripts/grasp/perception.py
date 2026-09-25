@@ -1,7 +1,7 @@
 """Where the cube and the cylinders are, from the wrist camera's scan views.
 
 Simulator-free -- numpy and scipy only -- because it has to run on the real
-arm unchanged (docs/grasp_rl_plan.md §4). It takes what the real arm has:
+arm unchanged. It takes what the real arm has:
 
     a view  dict(depth (H, W) metres, 0 = no reading,
                  rgb (H, W, 3) uint8,

@@ -4,10 +4,10 @@
     python scripts/grasp/isaaclab_train.py --num_envs 16 --num-servers 4 --max-iterations 2000
     python scripts/grasp/isaaclab_train.py --smoke                       # 2 envs, 3 iterations
 
-Training mode (docs/grasp_rl_plan.md §7): the planner is told each
-environment's cylinders, nothing is rendered, and the policy sees the
-synthesised perception estimate. Physics runs on --device (cpu by default,
-which is faster at these sizes -- plan §9); the networks train on --rl-device.
+Training mode: the planner is told each environment's cylinders, nothing is
+rendered, and the policy sees the synthesised perception estimate. Physics runs on --device (cpu by default,
+which was measured faster than GPU PhysX up to 128 envs and estimated to
+~400); the networks train on --rl-device.
 
 Unless --no-servers, it starts planner_servers.py itself (--scene grasp
 --no-mapping), one per --num-servers (default: one per env), and stops them

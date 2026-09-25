@@ -8,7 +8,7 @@ lands on its link.
 
 Run:
     python tools/build_ur5_robotiq_config.py
-    python tools/show_collision_spheres.py ur5_robotiq
+    python tools/check_robot_cfg.py
 """
 
 import argparse

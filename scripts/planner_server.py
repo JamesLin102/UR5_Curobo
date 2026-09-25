@@ -743,8 +743,8 @@ def handle_plan_joint(planner, kin, header, bodies=()):
 class Worlds:
     """Where each environment's bodies stand this episode, for the planner (op "world").
 
-    Training mode: the planner is TOLD the cylinders instead of mapping them
-    (docs/grasp_rl_plan.md §7). One server can hold many environments' worlds;
+    Training mode: the planner is TOLD the cylinders instead of mapping them.
+    One server can hold many environments' worlds;
     a request names its environment ("world": key) and the planner's world is
     swapped to that one first, if it is not the one loaded. A cylinder reaches
     the planner as cuRobo's own stand-in for one, its bounding box
@@ -915,7 +915,7 @@ class PathCheck:
     """Is a straight move -- the joint blend MoveZ makes -- clear of what the planner knows?
 
     The grasp's vertical moves are IK and interpolation, which the planner
-    never sees; this is what checks them (docs/grasp_rl_plan.md §2). The blend
+    never sees; this is what checks them. The blend
     is sampled, and every collision sphere of the arm is held MARGIN clear of
     every body the environment was given (exact shapes) and, all but the
     fingers', of the static obstacles -- the fingers are meant to come down to
