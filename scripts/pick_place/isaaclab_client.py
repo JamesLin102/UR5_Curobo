@@ -1,6 +1,6 @@
-"""The pick-and-place demo on Isaac Lab: isaacsim_client.py, on the other backend.
+"""The pick-and-place demo on Isaac Lab.
 
-Same loop (demo_loop), same planner server, same scene. The cell comes from
+The loop is demo_loop's, planned by planner_server.py. The cell comes from
 the registered gym task, so what runs here is exactly what a learning loop
 would get from gymnasium.make().
 

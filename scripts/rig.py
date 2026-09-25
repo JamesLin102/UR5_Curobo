@@ -108,7 +108,7 @@ ROBOTS = {
             "speed": 2.0,
             # Which loop closure the simulator adds, or None. "robotiq_2f85"
             # pins each inner knuckle to its finger tip -- see
-            # sim_env.close_gripper_linkage for why, and where the pin goes.
+            # lab.usd_edits.close_gripper_linkage for why, and where the pin goes.
             "linkage": "robotiq_2f85",
             # The joints the PIN is responsible for rather than the drive,
             # matched by substring. They are not commanded, and they must not

@@ -13,7 +13,7 @@ Builds the cell through the task-free lab.tasks.base.CellEnv with no planner
   gains               PhysX's drive gains per joint, SI, against rig.ROBOTS x DEG
   frames              which body the tool frame and each camera ended up on
   stage               the linkage pins and the pad material binding
-  HOME                how far the arm drifts holding HOME (the Isaac Sim side
+  HOME                how far the arm drifts holding HOME (the Isaac Sim backend
                       measured 4.4 mrad once fixed joints were merged)
   gripper             closing on nothing: the spread across the linkage's
                       joints as a fraction of a full close (0.003 with the

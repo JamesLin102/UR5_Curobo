@@ -1,4 +1,4 @@
-"""LabCell: N cells on Isaac Lab, driven by the same primitives as sim_env.SimEnv.
+"""LabCell: N cells on Isaac Lab, driven by the cell_api primitives.
 
     cell = LabCell(env)                     # built by lab.tasks.base.CellEnv
     results = cell.run(env_ids, programs)   # cell_api ops, all envs at once
@@ -9,11 +9,12 @@ Primitives, not a task: what a leg IS lives in legs.py, what a step means
 lives in each example's lab_env.py. Every pose in or out is in the scene's own
 coordinates -- relative to the environment's origin -- so N cells look like N
 copies of the one the scene describes, and the planner, which knows nothing
-of environments, sees each of them exactly as it would on the Isaac Sim side.
+of environments, sees each of them exactly as it would a single cell.
 
 The joint bookkeeping (planner order vs simulator order, the gripper's
-coupling and its pinned followers) follows sim_env.SimEnv line for line; see
-the comments there for why each piece is the way it is.
+coupling and its pinned followers) was ported line for line from the Isaac Sim
+backend's SimEnv, removed after 17eff58; its comments (git show
+17eff58:scripts/sim/sim_env.py) say why each piece is the way it is.
 """
 
 import os
@@ -133,7 +134,7 @@ class LabCell:
     # --- joints ---------------------------------------------------------------
 
     def _map_joints(self):
-        """Planner order onto simulator order, arm and gripper apart. As in SimEnv."""
+        """Planner order onto simulator order, arm and gripper apart."""
         target = self.spec.targets[0] if self.spec.targets else None
         planned = self.pool.joint_names(self.spec.home, target)
         sim_names = list(self.robot.joint_names)
@@ -292,7 +293,7 @@ class LabCell:
     def fuse(self, env_ids):
         """Send each camera's depth, paired with the pose it was rendered at.
 
-        Fire-and-forget, as on the Isaac Sim side: returns how many frames
+        Fire-and-forget: returns how many frames
         were sent, which says nothing about what the mapper made of them.
         """
         sent = 0

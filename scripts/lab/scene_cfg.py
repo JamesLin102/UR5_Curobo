@@ -32,11 +32,11 @@ from isaaclab.assets import Articulation, RigidObject, RigidObjectCfg
 from isaaclab.sensors import Camera, CameraCfg, ContactSensor, ContactSensorCfg, TiledCameraCfg
 
 from rig import ROBOTS
-from sim_usd import (GRIP_MATERIAL, GRIP_MATERIAL_PATH, apply_linkage, apply_urdf_colors,
-                     bind_pad_material, body_ancestor)
 from urdf_frames import split_transform
 
 from .robots import ROOT, make_robot_cfg
+from .usd_edits import (GRIP_MATERIAL, GRIP_MATERIAL_PATH, apply_linkage, apply_urdf_colors,
+                        bind_pad_material, body_ancestor)
 
 ENV_NS = "/World/envs/env_.*"
 GROUND = "/World/ground"

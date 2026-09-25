@@ -1,8 +1,7 @@
 """The pick-and-place demo loop, for any backend's cell.
 
-Written against cell_api.CellLike only, so the Isaac Sim client
-(isaacsim_client.py) and the Isaac Lab client (isaaclab_client.py) run the
-exact same loop -- which is what makes their numbers comparable.
+Written against cell_api.CellLike only, so the demo does not depend on how the
+cell is simulated (isaaclab_client.py runs it on Isaac Lab).
 """
 
 from cell_api import CellLike

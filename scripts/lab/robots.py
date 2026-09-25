@@ -7,18 +7,19 @@ Nothing here knows which robot it is building. The URDF, the joints, how they
 are driven, which of them a loop closure owns: all of it is read from the
 rig entry, so a second robot is a second entry there and no edit here.
 
-Two things differ from the Isaac Sim side's URDF import and are handled here:
+Two things differ from Isaac Sim's own URDF import, which rig.ROBOTS' numbers
+were measured on, and are handled here:
 
   merging   Isaac Lab's converter pins URDF importer 2.4.31 and tells it to
-            merge fixed links WITH mass into their parent too. The Isaac Sim
-            side's bundled 2.4.30 merges only massless frames. The converter
-            below makes that choice a config flag (CellCfg.merge_inertial),
-            defaulting to the Isaac Sim side's, so both backends simulate the
-            same bodies.
+            merge fixed links WITH mass into their parent too. Isaac Sim's
+            bundled 2.4.30 merges only massless frames. The converter below
+            makes that choice a config flag (CellCfg.merge_inertial),
+            defaulting to 2.4.30's, so the bodies are the ones the rig's
+            numbers were measured on.
   gains     rig.ROBOTS stores drive gains as USD writes them, per DEGREE for a
             revolute joint. Isaac Lab actuators take SI, per radian, and
             convert back on the way into USD. The factor is DEG below; without
-            it the arm would be 57x softer than on the Isaac Sim side.
+            it the arm would be 57x softer than the rig means.
             And they are gains for the drive TYPE the rig names (the Isaac Sim
             importer's "acceleration"), which the converter is told as well:
             Isaac Lab's own default, "force", reads the same numbers as a

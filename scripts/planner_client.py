@@ -1,8 +1,9 @@
 """Socket client for planner_server.py.
 
 Imports neither Isaac Sim nor cuRobo -- only numpy and the framing in
-proto.py -- so anything can use it: the Isaac Sim side (sim/sim_env.py), and code
-that only wants plans, such as a learning loop running beside the simulator.
+proto.py -- so anything can use it: the Isaac Lab backend (lab/planner_pool.py),
+and code that only wants plans, such as a learning loop running beside the
+simulator.
 """
 
 import socket

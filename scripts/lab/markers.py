@@ -2,9 +2,9 @@
 
 As scene geometry a marker is rendered into depth, fused into the map as an
 obstacle sitting on the goal, and then every plan to that goal fails (measured
-on the Isaac Sim side: 193 of 199).
+on the removed Isaac Sim backend: 193 of 199).
 
-    "overlay"  the debug-draw viewport overlay, the Isaac Sim side's own:
+    "overlay"  Isaac Sim's debug-draw viewport overlay:
                drawn by a pass render products do not sample. The default.
     "usd"      Isaac Lab's VisualizationMarkers, kept only if a depth check
                shows the cameras do not see them; otherwise "overlay".
@@ -23,7 +23,7 @@ still runs its depth check headless, which is how that check is tested.
 import numpy as np
 import torch
 
-from sim_usd import draw_targets
+from .usd_edits import draw_targets
 
 
 class GoalMarkers:

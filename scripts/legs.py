@@ -7,7 +7,7 @@ to be gripped is, to the map, an obstacle (see scenes.base.SceneSpec.pick).
     action = [x, y, z, yaw]   z is the tool frame's height at the grip; yaw
                               turns the tool about world Z, tool pointing down.
 
-Standard library only, so both backends and every task can import it.
+Standard library only, so the backend and every task can import it.
 """
 
 import math

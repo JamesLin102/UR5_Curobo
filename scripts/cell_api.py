@@ -1,9 +1,10 @@
-"""The contract every simulator backend offers: one cell, driven by primitives.
+"""The contract a simulator backend offers: one cell, driven by primitives.
 
-Two backends implement it -- sim_env.SimEnv on Isaac Sim, and lab.cell.CellView
-on Isaac Lab -- and everything that only wants to DRIVE a cell (the demo loop,
-the pick-and-place task, the checks) is written against this file and nothing
-else. Standard library and numpy only, so both processes can import it.
+lab.cell.CellView implements it on Isaac Lab (an Isaac Sim backend did too,
+until it was removed after 17eff58), and everything that only wants to DRIVE a
+cell (the demo loop, the pick-and-place task, the checks) is written against
+this file and nothing else. Standard library and numpy only, so the simulator
+and the planner process can both import it.
 
 Two layers:
 
@@ -32,8 +33,8 @@ from rig import DEFAULT_ROBOT
 # enough to tell "carrying it" from "closed on air".
 HOLDING_RADIUS = 0.05
 
-# How long the primitives take, in sim steps. Both backends run the same
-# numbers, so a leg costs the same on either.
+# How long the primitives take, in sim steps. Any backend runs these same
+# numbers, so a leg costs the same on each.
 SCAN_STEPS = 70            # per scan pose...
 SCAN_BLEND_STEPS = 50      # ...of which blending onto it takes this many
 MOVE_Z_STEPS = 70          # move_tool_z's default interpolation

@@ -1,7 +1,7 @@
 """CellCfg: every runtime knob of an Isaac Lab cell, as one configclass.
 
 The hardware and the world are NOT in here: those come from rig.ROBOTS and the
-scene module, by name, exactly as on the Isaac Sim side. What is here is how
+scene module, by name. What is here is how
 this backend builds and drives them, so it can be overridden from the command
 line (lab/app.py) or through Isaac Lab's Hydra config overrides.
 """
@@ -20,7 +20,7 @@ class CellCfg:
     overhead: bool = True               # also build the scene's FIXED ("pose") cameras
     map_every: int = 6                  # fuse a frame every N sim steps while moving
     # Sim steps the depth image trails the physics by. Isaac Lab renders
-    # synchronously, so it is not the Isaac Sim side's 2: measured 0 with
+    # synchronously, so it is not the removed Isaac Sim backend's 2: measured 0 with
     # tools/lab_measure_depth_lag.py, for both cameras, for a teleported
     # payload and for a 0.3 rad arm jump alike -- the frame read after the
     # step that moved something already shows it.
@@ -43,7 +43,7 @@ class CellCfg:
     markers: str = "overlay"            # goal markers: "overlay" | "usd" | "off"
 
     # How the URDF becomes USD. False merges only the massless frames into
-    # their parent, which is what the Isaac Sim side's importer does; True
+    # their parent, which is what Isaac Sim's bundled importer (2.4.30) does; True
     # also folds links that have mass into theirs (Isaac Lab's default).
     merge_inertial: bool = False
     force_usd: bool = False             # regenerate the USD even if the cache looks current

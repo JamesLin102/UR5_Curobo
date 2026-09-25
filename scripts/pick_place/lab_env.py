@@ -1,7 +1,6 @@
 """Pick-and-place on Isaac Lab: the policy picks points, cuRobo moves.
 
-The same task as pick_place.isaacsim_env.PickPlaceEnv on the Isaac Sim side --
-same legs, same rewards, same observation -- because both are pick_place.task. One
+The legs, rewards and observation are pick_place.task's. One
 step is one LEG per environment: a pick if its gripper is empty, a place if
 it is holding something.
 

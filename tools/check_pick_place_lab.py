@@ -1,31 +1,30 @@
-"""End-to-end check of the Isaac Lab backend, and its A/B against the Isaac Sim one.
+"""End-to-end check: does pick_place still work on Isaac Lab, and does the map still matter?
 
-tools/check_pick_place.py, with the cell built by Isaac Lab: one command, its
-own planner servers, headless, an oracle gripping at the true pedestals. The
-environment is created the way Isaac Lab's own scripts create one --
-isaaclab_tasks' parse_env_cfg() on the registered gym id, then gym.make() --
-so passing also proves the task is registered and constructible as any Isaac
-Lab task is.
+One command, its own planner servers, headless, an oracle gripping at the true
+pedestals. The environment is created the way Isaac Lab's own scripts create
+one -- isaaclab_tasks' parse_env_cfg() on the registered gym id, then
+gym.make() -- so passing also proves the task is registered and constructible
+as any Isaac Lab task is.
 
     python tools/check_pick_place_lab.py                    # both modes, one env
     python tools/check_pick_place_lab.py --mapping off      # the fast one
-    python tools/check_pick_place_lab.py --both-backends    # + the Isaac Sim check, side by side
     python tools/check_pick_place_lab.py --device cpu       # CPU PhysX
     python tools/check_pick_place_lab.py --num-envs 4       # four cells, four servers
     python tools/check_pick_place_lab.py --num-envs 8 --mapping off --num-servers 2
 
-Checked per mode over two seeds, in every environment, with the same pass
-criteria as the Isaac Sim check (see there): every leg plans, the pick holds
-the block, the place delivers it; mapped routes stay >= -10 mm from the slab
-and unmapped ones do not. Environment e starts its block on target (e + seed)
-% 2, so both directions run at once. Then, once, that Isaac Lab's rsl_rl
-wrapper accepts the environment.
+Checked per mode over two seeds, in every environment: every leg plans, the
+pick holds the block, the place delivers it; mapped routes stay >= -10 mm from
+the slab the planner is never told about, and unmapped ones do not -- if they
+did, the mapped check would prove nothing. Environment e starts its block on
+target (e + seed) % 2, so both directions run at once. Then, once, that Isaac
+Lab's rsl_rl wrapper accepts the environment.
 
 With several environments each one has its own planner server (its own map),
 started here by scripts/planner_servers.py; with mapping off they may share
 fewer (--num-servers), since the planner's world is then the same for all.
 
-For comparison, what the Isaac Sim backend measured when this was written:
+The -10 mm bound sits between what the two modes measured on the Isaac Sim
+backend (removed after 17eff58) when it was written:
     mapping off   -26 / -20 / -16 / -20 mm     mapping on   +4 / +10 / +2 / -3..+2 mm
 
 Exit status 0 means every check passed. The servers' ports (rig.PORT and up)
@@ -44,15 +43,18 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
-sys.path.insert(0, os.path.join(ROOT, "tools"))
-import check_pick_place as base  # noqa: E402  (the pass bound, the old check)
 from rig import DEFAULT_ROBOT, HOST, PORT  # noqa: E402
 
-REFERENCE_MM = {False: [-26, -20, -16, -20], True: [4, 10, 2, 2]}
+BOUND_MM = -10.0
 
 
 def log(msg):
     print(f"[check-lab] {msg}", flush=True)
+
+
+def tail(path, n=25):
+    with open(path) as f:
+        return "".join(f.readlines()[-n:])
 
 
 def gaps(info):
@@ -142,21 +144,16 @@ def run_mode(args, mapping):
             obs, extras = env.reset(seed=1, options={"block_on": [(e + 1) % 2 for e in range(n)]})
 
     flat = [c for leg in clearances for c in leg]
-    if n == 1:
-        log(f"A/B slab clearance, mm: isaac lab {[round(c) for c in flat]}  "
-            f"vs isaac sim {REFERENCE_MM[mapping]}")
-    else:
-        for e in range(n):
-            log(f"env {e} slab clearance, mm: {[round(c) for leg in clearances[e::n] for c in leg]}")
-        log(f"isaac sim, one env, for reference: {REFERENCE_MM[mapping]}")
+    for e in range(n):
+        log(f"env {e} slab clearance, mm: {[round(c) for leg in clearances[e::n] for c in leg]}")
     if placed:
         log(f"placement error, mm: {min(placed):.1f}..{max(placed):.1f} over {len(placed)} places")
     if not flat:
         failures.append("the server reported no clearance to the slab")
-    elif mapping and min(flat) < base.BOUND_MM:
+    elif mapping and min(flat) < BOUND_MM:
         failures.append(f"a mapped route came {min(flat):+.0f} mm from the slab "
-                        f"(bound {base.BOUND_MM:+.0f})")
-    elif not mapping and min(flat) > base.BOUND_MM:
+                        f"(bound {BOUND_MM:+.0f})")
+    elif not mapping and min(flat) > BOUND_MM:
         failures.append(f"unmapped routes cleared the slab by {min(flat):+.0f} mm: "
                         f"it is no longer in the way, so the mapped check proves nothing")
 
@@ -230,7 +227,7 @@ def check(args, mapping, workdir):
     servers, err = start_servers(k, mapping, srv_log)
     try:
         if err:
-            log(f"FAIL {name}: planner servers {err}\n{base.tail(srv_log)}")
+            log(f"FAIL {name}: planner servers {err}\n{tail(srv_log)}")
             return False
         cmd = [sys.executable, "-u", os.path.abspath(__file__), "--child",
                "--mapping", tag, "--device", args.device, "--robot", args.robot,
@@ -273,8 +270,6 @@ def main():
     ap.add_argument("--camera-class", choices=("camera", "tiled"), default=None)
     ap.add_argument("--replicate-physics", action="store_true")
     ap.add_argument("--depth-lag", type=int, default=None)
-    ap.add_argument("--both-backends", action="store_true",
-                    help="run tools/check_pick_place.py first, for the A/B")
     ap.add_argument("--child", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args()
 
@@ -289,7 +284,9 @@ def main():
             log(f"  - {f}")
         log(f"RESULT {'FAIL' if failures else 'PASS'}")
         sys.stdout.flush()
-        os._exit(1 if failures else 0)   # see check_pick_place.py
+        # Not env.close(): a headless app often fails to exit cleanly and
+        # leaves the process holding the GPU. The result is out.
+        os._exit(1 if failures else 0)
 
     modes = {"on": [True], "off": [False], "both": [False, True]}[args.mapping]
     if args.num_servers and True in modes and args.num_servers != args.num_envs:
@@ -300,14 +297,8 @@ def main():
     if taken:
         sys.exit(f"[check-lab] ports {taken} are already in use -- stop the running "
                  f"planner server(s) first (ss -ltnp | grep {PORT})")
-    results = []
-    if args.both_backends:
-        log("=== isaac sim backend (tools/check_pick_place.py) ===")
-        old = subprocess.run([sys.executable, "-u", os.path.join(ROOT, "tools", "check_pick_place.py"),
-                              "--mapping", args.mapping], cwd=ROOT)
-        results.append(old.returncode == 0)
     workdir = tempfile.mkdtemp(prefix="check_pick_place_lab_")
-    results += [check(args, m, workdir) for m in modes]
+    results = [check(args, m, workdir) for m in modes]
     log(f"logs in {workdir}")
     log("ALL PASSED" if all(results) else "FAILED")
     sys.exit(0 if all(results) else 1)

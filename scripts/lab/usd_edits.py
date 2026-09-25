@@ -1,10 +1,9 @@
-"""USD edits both simulator backends make to the imported robot.
+"""USD edits the Isaac Lab backend makes to the imported robot.
 
-sim/sim_env.py (Isaac Sim) and lab/ (Isaac Lab) import the same URDF through two
-different front ends, and then have to fix the same things on the stage: close
-the gripper's loop, recover frames the importer merged away, put the pad
-material on, give the meshes the colours the URDF says. Those fixes live here,
-once.
+After the URDF import the stage still needs fixing: close the gripper's loop,
+recover frames the importer merged away, put the pad material on, give the
+meshes the colours the URDF says. (Written for two backends; the Isaac Sim one
+was removed after 17eff58.)
 
 pxr and the Isaac modules can only be imported once a Kit app is running, so
 every function imports what it needs itself. Importing this module needs
@@ -164,7 +163,7 @@ def apply_urdf_colors(stage, prim_path, urdf):
     <material> on a mesh visual: every mesh keeps the material its mesh
     converter made, and for an STL -- which carries none -- that is a white
     DefaultMaterial. So the FT 300 and the Wrist Camera, black in the URDF and
-    on the real arm, came out white on both backends. A DAE brings its own
+    on the real arm, came out white. A DAE brings its own
     materials, and this URDF gives those visuals no colour, so they are left
     alone.
 

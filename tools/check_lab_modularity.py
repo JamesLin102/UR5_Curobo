@@ -11,14 +11,10 @@ Three things, each guarding a promise the layout makes:
                 scripts/*.py, scenes/   shared: no backend, no example, no
                                         Isaac Lab, no cuRobo (planner_server.py
                                         alone has cuRobo, and no simulator)
-                lab/                    Isaac Lab backend: no sim/, no example,
-                                        no cuRobo
-                sim/                    Isaac Sim backend (frozen): no lab/, no
-                                        Isaac Lab, no example, no cuRobo
+                lab/                    Isaac Lab backend: no example, no cuRobo
                 <example>/              one package per example; never another
                                         example, never cuRobo. By file name:
                                           lab_*, isaaclab_*   Isaac Lab side
-                                          isaacsim_*          Isaac Sim side
                                           anything else       simulator-free,
                                             because the planner server (scene.py)
                                             or the real robot may import it
@@ -59,7 +55,7 @@ def report(ok, what):
 
 # --- imports -------------------------------------------------------------------
 
-BACKENDS = {"lab", "sim"}
+BACKENDS = {"lab"}
 NOT_EXAMPLES = BACKENDS | {"scenes", "__pycache__"}
 ISAAC_LAB = {"isaaclab", "isaaclab_tasks", "isaaclab_rl"}
 SIMULATORS = ISAAC_LAB | {"isaacsim", "omni", "pxr", "carb"}
@@ -79,9 +75,7 @@ def example_rules(name):
     for path in sorted(glob.glob(os.path.join(SCRIPTS, name, "*.py"))):
         base = os.path.basename(path)
         if base.startswith(("lab_", "isaaclab_")):
-            yield path, never | {"sim"}
-        elif base.startswith("isaacsim_"):
-            yield path, never | {"lab"} | ISAAC_LAB
+            yield path, never
         else:
             yield path, never | BACKENDS | SIMULATORS
 
@@ -98,9 +92,7 @@ def rules():
     for path in sorted(glob.glob(os.path.join(SCRIPTS, "scenes", "*.py"))):
         yield path, shared
     for path in sorted(glob.glob(os.path.join(SCRIPTS, "lab", "**", "*.py"), recursive=True)):
-        yield path, ex | {"sim", "curobo"}
-    for path in sorted(glob.glob(os.path.join(SCRIPTS, "sim", "**", "*.py"), recursive=True)):
-        yield path, ex | {"lab", "curobo"} | ISAAC_LAB
+        yield path, ex | {"curobo"}
     for name in sorted(ex):
         yield from example_rules(name)
 

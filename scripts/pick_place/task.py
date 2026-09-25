@@ -1,8 +1,8 @@
 """Pick-and-place as a task: goals, rewards, observations. No simulator in here.
 
-Shared by both gym environments -- pick_place.isaacsim_env.PickPlaceEnv (Isaac
-Sim, one cell) and pick_place.lab_env.PickPlaceEnv (Isaac Lab, N cells) -- so
-the two score the same episode the same way. Standard library and numpy only.
+Used by pick_place.lab_env.PickPlaceEnv (Isaac Lab, N cells), kept apart from
+the simulator so the scoring can be read, and tested, on its own. Standard
+library and numpy only.
 
 One step is one LEG -- a pick if the gripper is empty, a place if it is
 holding something -- built by legs.leg_ops: above, down, grip, up.

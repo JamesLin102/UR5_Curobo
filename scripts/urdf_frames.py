@@ -1,8 +1,7 @@
 """Frame arithmetic read straight off a URDF. numpy and the standard library only.
 
-Both simulator backends need it (sim/sim_env.py on Isaac Sim, lab/ on Isaac Lab),
-and neither may import the other, so it lives here. Nothing in this file needs
-a running simulator.
+The Isaac Lab backend (lab/) and the planner server both need it, so it lives
+here. Nothing in this file needs a running simulator.
 
 Conventions: quaternions are (w, x, y, z); a rotation matrix's COLUMNS are the
 frame's x, y, z axes; 4x4 transforms map child coordinates into the parent's.
@@ -32,7 +31,7 @@ def gripper_pin_anchors(urdf_path):
         A = knuckle joint          C = finger_tip joint  (in base coords at 0)
         B = inner_knuckle joint    D = the missing pin
 
-    a parallelogram gives D = B + (C - A) exactly -- see sim_usd.close_gripper_linkage.
+    a parallelogram gives D = B + (C - A) exactly -- see lab.usd_edits.close_gripper_linkage.
 
     Returns {side: ((x, y, z) on inner_knuckle, (x, y, z) on finger_tip)}.
     """

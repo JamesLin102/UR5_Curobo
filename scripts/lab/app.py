@@ -5,8 +5,7 @@
     tid, cfg = make_env_cfg(args)           # the registered task's config, overridden
     env = gymnasium.make(tid, cfg=cfg)
 
-The flags mirror isaacsim_client.py's, so the two backends are driven the
-same way; AppLauncher adds its own (--headless, --device, --enable_cameras, ...).
+AppLauncher adds its own flags (--headless, --device, --enable_cameras, ...).
 Choices come from the registries -- rig.ROBOTS, scenes, lab.tasks.TASKS -- so a
 new robot, scene or task shows up here without an edit.
 """
